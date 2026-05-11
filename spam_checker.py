@@ -29,8 +29,7 @@ AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 # --- Layer 1: Your personal blocklist ---
 # Add any numbers you KNOW are spam (E.164 format: +1XXXXXXXXXX)
 MANUAL_BLOCKLIST: set[str] = {
-    "+18005550100",   # example — replace with real known spam numbers
-    "+12025550199",
+    "+14016127630",
 }
 
 # --- Twilio spam risk threshold (0–100) ---
