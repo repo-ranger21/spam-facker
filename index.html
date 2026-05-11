@@ -878,7 +878,7 @@
   <h2 class="section-title">CHOOSE YOUR<br><span style="color:var(--red)">WEAPON</span></h2>
   <div class="pricing-grid">
 
-    <div class="pricing-card">
+    <div class="pricing-card" id="free-plan">
       <div class="pricing-tier">Free</div>
       <div class="pricing-price">$0</div>
       <div class="pricing-period">/month — forever</div>
@@ -888,11 +888,10 @@
         <li>Basic call log (duration + agent)</li>
         <li>SpamFacker honeypot number</li>
       </ul>
-      <!-- Placeholder link for MVP; wire to backend later. -->
-      <a href="#" class="btn-tier">GET STARTED</a>
+      <a href="#agents" class="btn-tier">GET STARTED</a>
     </div>
 
-    <div class="pricing-card">
+    <div class="pricing-card" id="chaos-plan">
       <div class="pricing-tier">Chaos</div>
       <div class="pricing-price">$9</div>
       <div class="pricing-period">/month</div>
@@ -903,11 +902,10 @@
         <li>Personal leaderboard stats</li>
         <li>Bad Connection Gaslight mode</li>
       </ul>
-      <!-- Placeholder link for MVP; wire to backend later. -->
-      <a href="#" class="btn-tier">DEPLOY CHAOS</a>
+      <a href="#saltmines" class="btn-tier">DEPLOY CHAOS</a>
     </div>
 
-    <div class="pricing-card featured">
+    <div class="pricing-card featured" id="schadenfreude-plan">
       <div class="pricing-badge">Most Popular</div>
       <div class="pricing-tier">Schadenfreude</div>
       <div class="pricing-price">$19</div>
@@ -919,11 +917,10 @@
         <li>Monthly Hall of Shame digest</li>
         <li>Priority agent assignment</li>
       </ul>
-      <!-- Placeholder link for MVP; wire to backend later. -->
-      <a href="#" class="btn-tier">MAXIMUM SPITE</a>
+      <a href="#hall-of-shame" class="btn-tier">MAXIMUM SPITE</a>
     </div>
 
-    <div class="pricing-card">
+    <div class="pricing-card" id="vaas-enterprise">
       <div class="pricing-tier">VaaS</div>
       <div class="pricing-price">$99</div>
       <div class="pricing-period">/seat/month — Enterprise</div>
@@ -934,8 +931,7 @@
         <li>Jurisdiction-aware recording compliance</li>
         <li>Corporate spam line rerouting</li>
       </ul>
-      <!-- Placeholder link for MVP; wire to backend later. -->
-      <a href="#" class="btn-tier">CONTACT SALES</a>
+      <a href="#contact" class="btn-tier">CONTACT SALES</a>
     </div>
 
   </div>
@@ -944,7 +940,7 @@
 <!-- LEADERBOARD -->
 <section class="leaderboard-section" id="saltmines">
   <p class="section-label">// Global Rankings</p>
-  <h2 class="section-title">THE SALT<br><span style="color:var(--yellow)">MINES</span></h2>
+  <h2 class="section-title" id="hall-of-shame">THE SALT<br><span style="color:var(--yellow)">MINES</span></h2>
   <table class="leaderboard-table">
     <thead>
       <tr>
@@ -996,7 +992,7 @@
 </section>
 
 <!-- FOOTER -->
-<footer>
+<footer id="contact">
   <div class="footer-brand">
     <span class="logo">SpamFacker</span>
     <p class="footer-tagline">
@@ -1009,31 +1005,21 @@
   <div>
     <p class="footer-col-title">Product</p>
     <ul class="footer-links">
-      <!-- Placeholder link for MVP; wire to backend later. -->
-      <li><a href="#">The Agents</a></li>
-      <!-- Placeholder link for MVP; wire to backend later. -->
-      <li><a href="#">Pricing</a></li>
-      <!-- Placeholder link for MVP; wire to backend later. -->
-      <li><a href="#">The Salt Mines</a></li>
-      <!-- Placeholder link for MVP; wire to backend later. -->
-      <li><a href="#">Hall of Shame</a></li>
-      <!-- Placeholder link for MVP; wire to backend later. -->
-      <li><a href="#">VaaS Enterprise</a></li>
+      <li><a href="#agents">The Agents</a></li>
+      <li><a href="#pricing">Pricing</a></li>
+      <li><a href="#saltmines">The Salt Mines</a></li>
+      <li><a href="#hall-of-shame">Hall of Shame</a></li>
+      <li><a href="#vaas-enterprise">VaaS Enterprise</a></li>
     </ul>
   </div>
-  <div>
+  <div id="legal-support">
     <p class="footer-col-title">Legal & Support</p>
     <ul class="footer-links">
-      <!-- Placeholder link for MVP; wire to backend later. -->
-      <li><a href="#">Terms of Service</a></li>
-      <!-- Placeholder link for MVP; wire to backend later. -->
-      <li><a href="#">Privacy Policy</a></li>
-      <!-- Placeholder link for MVP; wire to backend later. -->
-      <li><a href="#">Recording Compliance</a></li>
-      <!-- Placeholder link for MVP; wire to backend later. -->
-      <li><a href="#">The Salt Mines (Help)</a></li>
-      <!-- Placeholder link for MVP; wire to backend later. -->
-      <li><a href="#">Contact</a></li>
+      <li><a href="#legal-support">Terms of Service</a></li>
+      <li><a href="#legal-support">Privacy Policy</a></li>
+      <li><a href="#legal-support">Recording Compliance</a></li>
+      <li><a href="#saltmines">The Salt Mines (Help)</a></li>
+      <li><a href="#contact">Contact</a></li>
     </ul>
   </div>
 </footer>
