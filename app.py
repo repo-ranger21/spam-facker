@@ -23,7 +23,7 @@ Expose locally with ngrok:
 
 import os
 import logging
-from flask import Flask, request, Response
+from flask import Flask, request, Response, send_from_directory
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Play
 from dotenv import load_dotenv
@@ -44,10 +44,18 @@ MY_TWILIO_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")   # Your Twilio number, e.g.
 # You can replace this with any audio file URL you host (e.g. Cloudflare R2, S3).
 RICK_ROLL_URL = os.getenv(
     "RICK_ROLL_URL",
-    "https://ia803108.us.archive.org/21/items/NeverGonnaGiveYouUp/jocofullinterview__comp.mp3"
+    "http://localhost:5000/audio/snippet.mp3"
 )
 
 client = Client(ACCOUNT_SID, AUTH_TOKEN)
+
+
+# ---------------------------------------------------------------------------
+# Static audio endpoint used by Twilio <Play>
+# ---------------------------------------------------------------------------
+@app.route("/audio/snippet.mp3", methods=["GET"])
+def audio_snippet():
+    return send_from_directory("static", "snippet.mp3", mimetype="audio/mpeg")
 
 
 # ---------------------------------------------------------------------------
