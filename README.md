@@ -1,125 +1,142 @@
-# SpamFacker 🎵
+# SpamFacker
 
-Detects spam callers, calls them back, and traps them in an infinite audio loop.
+SpamFacker is a two-part anti-spam platform:
 
-## How it works
+- Frontend: a static landing page served from Cloudflare Pages
+- Backend: a Flask webhook service deployed to Render or Railway for Twilio call handling and spam checks
+
+## Architecture Diagram
 
 ```text
-Spam call arrives → Twilio webhook → spam_checker.py → SPAM?
-                                                          │
-                          ┌───────────────────────────────┘
-                          ▼
-              Hang up on spammer (our end)
-              + Dial spammer back (their end)
-                          │
-                          ▼
-              Spammer answers → /rickroll webhook
-                          │
-                          ▼
-              🎵 Local revenge snippet (loop=∞) 🎵
+Cloudflare Pages (index.html)
+    |
+    v
+User lands on marketing site
+
+Twilio Incoming Voice Webhook
+    |
+    v
+Render/Railway Flask App (app.py)
+    |
+    +--> spam_checker.py
+    |      |- Manual blocklist
+    |      |- Twilio Lookup spam_risk
+    |      '- Nomorobo lookup
+    |
+    +--> /incoming returns TwiML
+    +--> Callback via Twilio REST API
+    +--> /rickroll serves TwiML with audio playback
+    '--> /audio/snippet.mp3 serves static audio when present
 ```
 
-## Prerequisites
+## Repository Layout
 
-- Python 3.10+
-- A [Twilio account](https://twilio.com) (~$1/month for a number + per-minute charges)
-- [ngrok](https://ngrok.com) for local testing (or deploy to a server)
+```text
+spam-facker/
+├── app.py
+├── spam_checker.py
+├── requirements.txt
+├── .env.example
+├── Procfile
+├── index.html
+├── _headers
+├── README.md
+└── static/
+    ├── .gitkeep
+    └── snippet.mp3 (gitignored; upload separately)
+```
 
-## Setup
+## Environment Variables
 
-### 1. Install dependencies
+| Name | Required | Description |
+| ---- | -------- | ----------- |
+| `TWILIO_ACCOUNT_SID` | Yes | Twilio Account SID used for Lookup and outbound callback requests |
+| `TWILIO_AUTH_TOKEN` | Yes | Twilio Auth Token used for REST calls and webhook signature validation |
+| `TWILIO_PHONE_NUMBER` | Yes | Twilio phone number in E.164 format used as the caller ID for callbacks |
+| `BASE_URL` | Yes | Public HTTPS base URL for the deployed Flask app; must exactly match the Twilio webhook URL and must not end with `/` |
+| `RICK_ROLL_URL` | No | Public audio URL to play during the callback; defaults to `${BASE_URL}/audio/snippet.mp3` |
+| `SPAM_THRESHOLD` | No | Minimum Twilio spam score required to treat a call as spam; default is `75` |
+| `NOMOROBO_API_KEY` | No | Optional Nomorobo API key for robocall lookups |
+| `PORT` | No | Runtime port injected by the host platform; defaults to `5000` locally |
+
+## Backend Deploy Steps
+
+### Render or Railway
+
+1. Connect the repository to Render or Railway.
+2. Let the platform auto-detect Python.
+3. Confirm the start command comes from [Procfile](Procfile): `web: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120`.
+4. Add the environment variables from [.env.example](.env.example) in the platform dashboard.
+5. Set your Twilio voice webhooks to `${BASE_URL}/incoming` and `${BASE_URL}/rickroll` through the same public host.
+6. Deploy and verify `${BASE_URL}/health` returns `{"status": "ok"}`.
+
+## Cloudflare Pages Deploy Steps
+
+1. Connect the repository to Cloudflare Pages.
+2. Set the build command to none.
+3. Set the output directory to `/`.
+4. Ensure [_headers](_headers) is included in the deployment output.
+5. If you later add any frontend environment variables, configure them in the Cloudflare dashboard.
+
+## Local Development
+
+1. Install the pinned backend dependencies:
 
 ```powershell
-pip install flask twilio requests python-dotenv
+python -m pip install -r requirements.txt
 ```
 
-### 2. Configure credentials
+1. Create a local env file:
 
 ```powershell
 Copy-Item .env.example .env
-# Edit .env with your Twilio credentials and BASE_URL
 ```
 
-### 3. Start the server
+1. Run the Flask server:
 
 ```powershell
 python app.py
 ```
 
-### 4. Expose it via ngrok (local dev)
+1. If testing locally with Twilio, expose the app via ngrok and set `BASE_URL` to the public HTTPS URL.
 
-```powershell
-ngrok http 5000
+## Audio Upload After Deploy
+
+The backend expects `static/snippet.mp3` to exist if you rely on the default audio route.
+
+### Render shell example
+
+1. Open the service shell from the Render dashboard.
+2. Upload or copy your audio file into the service filesystem at `static/snippet.mp3`.
+
+### SCP example
+
+```bash
+scp ./snippet.mp3 user@your-server:/opt/render/project/src/static/snippet.mp3
 ```
 
-Copy the `https://` URL ngrok gives you and set it as `BASE_URL` in your `.env`.
-
-## Create your local audio snippet (ffmpeg)
-
-By default, the app now uses this playback URL when `RICK_ROLL_URL` is not set:
-`http://localhost:5000/audio/snippet.mp3`
-
-That file is served by Flask from the `static/` folder. To generate a clipped MP3 from any source file:
-
-1. Put your source audio somewhere in the project (example: `fuck_you_ceelo.mp3`).
-2. Run ffmpeg with a start offset and duration.
-3. Write the result to `static/snippet.mp3`.
-
-PowerShell example using CeeLo Green's "Fuck You" (start at `00:00:31`, keep 15 seconds):
-
-```powershell
-New-Item -ItemType Directory -Force static | Out-Null
-ffmpeg -i .\fuck_you_ceelo.mp3 -ss 00:00:31 -t 15 -c copy .\static\snippet.mp3
-```
-
-Quick parameter guide:
-
-- `-ss`: start time (where the clip begins)
-- `-t`: clip duration in seconds
-- output path: `./static/snippet.mp3` (must match the Flask route)
-
-If you want to use a different hosted URL instead, set `RICK_ROLL_URL` in `.env` and it will override the local default.
-
-### 5. Configure Twilio webhook
-
-1. Go to [Twilio Console → Phone Numbers](https://console.twilio.com/us1/develop/phone-numbers/manage/incoming)
-2. Click your number → Voice Configuration
-3. Set **"A call comes in"** webhook to: `https://your-ngrok.ngrok.io/incoming`
-4. Method: `HTTP POST`
-5. Save.
-
-Now call your Twilio number from a phone — you'll hear "Thank you for calling."  
-Add that number to `MANUAL_BLOCKLIST` in `spam_checker.py` and call again — the SpamFacker trap activates.
+If you prefer not to manage server-side audio files, set `RICK_ROLL_URL` to a separate public HTTPS-hosted MP3 instead.
 
 ## Spam Detection Layers
 
-| Layer | Method | Cost |
-| ----- | ------ | ---- |
-| 1 | Manual blocklist | Free |
-| 2 | Twilio Lookup spam score | ~$0.01/call |
-| 3 | Nomorobo API | Free tier available |
+| Layer | Method | Behavior |
+| ----- | ------ | -------- |
+| 1 | Manual blocklist | Immediate local block decision |
+| 2 | Twilio Lookup `spam_risk` | Score-based spam detection |
+| 3 | Nomorobo API | Optional robocall lookup with a 3 second timeout |
 
-## Twilio Lookup (Recommended)
+If Twilio Lookup and Nomorobo are both unavailable, SpamFacker logs a warning and falls back to the manual blocklist only.
 
-Enable the **Spam Risk** add-on in your Twilio account:
-[Twilio Lookup Spam Risk](https://www.twilio.com/docs/lookup/v2-api/spam-risk)
+## Twilio Webhook Notes
 
-## Legal Note
+- `BASE_URL` must exactly match the deployed webhook host configured in Twilio.
+- Do not include a trailing slash in `BASE_URL`.
+- `/incoming` and `/rickroll` validate the Twilio request signature before processing.
+- `/incoming` and `/rickroll` always return TwiML, even on internal errors, to avoid 5xx retry loops.
 
-- This tool is for **defensive, personal use** against numbers that called you first.
-- Repeatedly calling back numbers you don't own may violate TCPA in the US.
-- Use responsibly — only retaliate against confirmed spam/scam numbers.
-- Do **not** deploy this against random numbers or use for harassment.
+## Legal Notice
 
-## Files
-
-```text
-spam_revenge/
-├── app.py            # Flask webhooks (incoming call + rickroll endpoint)
-├── spam_checker.py   # 3-layer spam detection logic
-├── static/
-│   └── snippet.mp3   # Local audio served at /audio/snippet.mp3
-├── .env.example      # Config template
-├── requirements.txt  # Dependencies
-└── README.md         # This file
-```
+- Use SpamFacker only for defensive handling of inbound calls you receive.
+- Telecom, call recording, and automated callback laws vary by jurisdiction.
+- You are responsible for confirming Twilio usage, recording consent, and local legal compliance before deployment.
+- Do not use this project to harass random numbers or initiate unsolicited campaigns.

@@ -1,2 +1,12 @@
 __pycache__/
-*.py[cod]
+*.pyc
+*.pyo
+.env
+.DS_Store
+static/*.mp3
+*.egg-info/
+dist/
+.venv/
+venv/
+node_modules/
+.wrangler/
