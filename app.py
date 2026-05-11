@@ -30,9 +30,12 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 from twilio.base.exceptions import TwilioRestException
 from twilio.request_validator import RequestValidator
 from twilio.rest import Client
-from twilio.twiml.voice_response import VoiceResponse, Play
+from twilio.twiml.voice_response import VoiceResponse, Play, Gather
 from dotenv import load_dotenv
 from spam_checker import is_spam
+from conversation import assign_agent, get_state, add_exchange, \
+    should_escalate, end_call, get_stall_tactic, elapsed_seconds
+from llm import generate_response, generate_stall
 
 load_dotenv()
 
@@ -115,35 +118,121 @@ def health() -> Response:
 @app.route("/incoming", methods=["POST"])
 def incoming_call():
     """
-    Twilio hits this endpoint the moment a call arrives.
-    We check if it's spam, then decide what to do.
+    Entry point for all inbound calls.
+    Spam → assign agent → intro → start Gather loop.
+    Legit → polite hold message.
     """
-    if not _validate_twilio_request():
-        logger.warning("Rejected invalid Twilio signature for /incoming")
-        return _hangup_twiml_response(status_code=403)
+    caller   = request.form.get("From", "Unknown")
+    call_sid = request.form.get("CallSid", "")
 
-    try:
-        caller = request.form.get("From", "Unknown")
-        call_sid = request.form.get("CallSid", "")
+    logger.info(f"Incoming call from: {caller} | SID: {call_sid}")
 
-        logger.info("Incoming call from: %s | SID: %s", caller, call_sid)
+    # Twilio signature validation
+    validator = RequestValidator(AUTH_TOKEN)
+    url       = f"{BASE_URL}/incoming"
+    if not validator.validate(url, request.form, request.headers.get("X-Twilio-Signature", "")):
+        logger.warning(f"Invalid Twilio signature from {caller}")
+        return Response("Forbidden", status=403)
 
-        resp = VoiceResponse()
+    resp = VoiceResponse()
 
-        if is_spam(caller):
-            logger.info("SPAM DETECTED: %s - initiating callback trap", caller)
+    if is_spam(caller):
+        logger.info(f"SPAM DETECTED: {caller} — deploying agent")
 
-            resp.say("Please hold.", voice="alice")
-            resp.pause(length=2)
-            _launch_callback(caller)
-            resp.hangup()
-        else:
-            resp.say("Thank you for calling. Connecting you now.", voice="alice")
+        # Assign agent and get their intro line
+        agent = assign_agent(call_sid)
 
-        return _twiml_response(resp)
-    except Exception:
-        logger.exception("Internal error while handling /incoming")
-        return _hangup_twiml_response()
+        # Greet the spammer in character, then open the Gather loop
+        gather = Gather(
+            input="speech",
+            action=f"{BASE_URL}/respond",
+            method="POST",
+            speech_timeout="auto",
+            speech_model="phone_call",
+            enhanced=True,
+            language="en-US",
+        )
+        gather.say(agent["intro"], voice=agent["voice"])
+        resp.append(gather)
+
+        # If they say nothing at all, loop back
+        resp.redirect(f"{BASE_URL}/respond", method="POST")
+
+    else:
+        resp.say("Thank you for calling. Please hold.", voice="Polly.Joanna")
+
+    return Response(str(resp), mimetype="text/xml")
+
+
+@app.route("/respond", methods=["POST"])
+def respond():
+    """
+    The conversation loop.
+    Every time the spammer speaks, Twilio hits this endpoint.
+    We: get their speech → run LLM → speak reply → listen again.
+
+    This loop runs indefinitely until the caller hangs up.
+    Each iteration = one exchange (them speaking + agent replying).
+    """
+    call_sid    = request.form.get("CallSid", "")
+    caller      = request.form.get("From", "Unknown")
+    speech_result = request.form.get("SpeechResult", "").strip()
+    confidence  = float(request.form.get("Confidence", "0"))
+
+    resp = VoiceResponse()
+
+    # Get or create call state
+    state = get_state(call_sid)
+    if not state:
+        # Edge case: state lost (e.g. worker restart) — reassign gracefully
+        logger.warning(f"[{call_sid}] No state found — reassigning agent")
+        agent = assign_agent(call_sid)
+    else:
+        agent = state["agent"]
+
+    # Handle empty or low-confidence STT
+    if not speech_result or confidence < 0.3:
+        logger.info(f"[{call_sid}] Low/empty STT (confidence={confidence:.2f}) — using stall")
+        reply = get_stall_tactic(call_sid)
+    else:
+        logger.info(f"[{call_sid}] Spammer said: '{speech_result[:80]}'")
+
+        # Check for escalation trigger
+        escalate = should_escalate(call_sid)
+
+        # Generate LLM response
+        history = state["history"] if state else []
+        reply   = generate_response(
+            agent=agent,
+            history=history,
+            user_speech=speech_result,
+            escalate=escalate,
+        )
+
+        # Store the exchange
+        add_exchange(call_sid, speech_result, reply)
+
+    # Log elapsed time for leaderboard data
+    elapsed = elapsed_seconds(call_sid)
+    logger.info(f"[{call_sid}] Agent reply ({elapsed}s elapsed): {reply[:80]}")
+
+    # Speak the reply and listen for the next input
+    gather = Gather(
+        input="speech",
+        action=f"{BASE_URL}/respond",
+        method="POST",
+        speech_timeout="auto",
+        speech_model="phone_call",
+        enhanced=True,
+        language="en-US",
+    )
+    gather.say(reply, voice=agent["voice"])
+    resp.append(gather)
+
+    # If silence — loop back to /respond which triggers a stall
+    resp.redirect(f"{BASE_URL}/respond", method="POST")
+
+    return Response(str(resp), mimetype="text/xml")
 
 
 # ---------------------------------------------------------------------------
@@ -210,15 +299,19 @@ def _launch_callback(spam_number: str):
 # ---------------------------------------------------------------------------
 @app.route("/status", methods=["POST"])
 def call_status():
-    sid      = request.form.get("CallSid")
-    status   = request.form.get("CallStatus")
+    sid      = request.form.get("CallSid", "")
+    status   = request.form.get("CallStatus", "")
     duration = request.form.get("CallDuration", "0")
-    to       = request.form.get("To")
+    to       = request.form.get("To", "Unknown")
 
-    logger.info("Call %s to %s ended - Status: %s | Duration: %ss", sid, to, status, duration)
+    logger.info(f"Call {sid} to {to} | Status: {status} | Duration: {duration}s")
 
     if status == "completed":
-        logger.info("Spammer %s endured %s seconds of Rick Astley", to, duration)
+        logger.info(
+            f"LEADERBOARD: Spammer {to} endured {duration}s. "
+            f"Scammer minutes wasted: {int(duration) // 60}m {int(duration) % 60}s"
+        )
+        end_call(sid)   # Clean up in-memory state
 
     return Response("", status=204)
 

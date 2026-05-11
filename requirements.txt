@@ -3,3 +3,4 @@ gunicorn==22.0.0
 python-dotenv==1.0.1
 requests==2.32.3
 twilio==9.1.0
+openai==1.30.1
