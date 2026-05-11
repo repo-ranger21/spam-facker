@@ -14,12 +14,17 @@ Any layer can flag a number as spam. First hit wins.
 import os
 import logging
 import requests
+from dotenv import load_dotenv
+from requests import RequestException
+from twilio.base.exceptions import TwilioRestException
 from twilio.rest import Client
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-AUTH_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN")
+AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 
 # --- Layer 1: Your personal blocklist ---
 # Add any numbers you KNOW are spam (E.164 format: +1XXXXXXXXXX)
@@ -52,14 +57,24 @@ def is_spam(phone_number: str) -> bool:
         return True
 
     # Layer 2: Twilio Lookup spam risk
-    if _check_twilio_lookup(phone_number):
+    twilio_lookup_result = _check_twilio_lookup(phone_number)
+    if twilio_lookup_result is True:
         logger.info(f"{phone_number} flagged by Twilio Lookup")
         return True
 
     # Layer 3: Nomorobo (if API key is configured)
-    if NOMOROBO_API_KEY and _check_nomorobo(phone_number):
+    nomorobo_result = False
+    if NOMOROBO_API_KEY:
+        nomorobo_result = _check_nomorobo(phone_number)
+    if nomorobo_result is True:
         logger.info(f"{phone_number} flagged by Nomorobo")
         return True
+
+    if twilio_lookup_result is None and nomorobo_result is None:
+        logger.warning(
+            "Twilio Lookup and Nomorobo unavailable for %s; falling back to manual blocklist only",
+            phone_number,
+        )
 
     logger.info(f"{phone_number} passed all spam checks — likely legitimate")
     return False
@@ -77,7 +92,7 @@ def _check_manual_blocklist(phone_number: str) -> bool:
 # Docs: https://www.twilio.com/docs/lookup/v2-api/spam-risk
 # Cost: ~$0.01 per lookup (check your Twilio pricing)
 # ---------------------------------------------------------------------------
-def _check_twilio_lookup(phone_number: str) -> bool:
+def _check_twilio_lookup(phone_number: str) -> bool | None:
     if not ACCOUNT_SID or not AUTH_TOKEN:
         logger.warning("Twilio creds not set — skipping Lookup check")
         return False
@@ -88,24 +103,32 @@ def _check_twilio_lookup(phone_number: str) -> bool:
             fields=["spam_risk"]
         )
 
-        spam_risk = result.spam_risk or {}
-        score     = spam_risk.get("score", 0)
-        level     = spam_risk.get("level", "none")
+        spam_risk = getattr(result, "spam_risk", None) or {}
+        score = spam_risk.get("score", 0)
+        level = spam_risk.get("level", "none")
 
         logger.info(f"Twilio Lookup — {phone_number}: score={score}, level={level}")
 
         return score >= TWILIO_SPAM_THRESHOLD
 
-    except Exception as e:
-        logger.error(f"Twilio Lookup failed for {phone_number}: {e}")
-        return False  # Fail open — don't punish legitimate callers on API errors
+    except TwilioRestException as exc:
+        logger.error(
+            "Twilio Lookup failed for %s: code=%s message=%s",
+            phone_number,
+            exc.code,
+            exc.msg,
+        )
+        return None
+    except Exception as exc:
+        logger.error(f"Twilio Lookup failed for {phone_number}: {exc}")
+        return None
 
 
 # ---------------------------------------------------------------------------
 # Layer 3: Nomorobo (robocall-specific detection)
 # Docs: https://api.nomorobo.com
 # ---------------------------------------------------------------------------
-def _check_nomorobo(phone_number: str) -> bool:
+def _check_nomorobo(phone_number: str) -> bool | None:
     try:
         # Nomorobo expects the number without the leading +1
         clean_number = phone_number.lstrip("+").lstrip("1")
@@ -117,13 +140,18 @@ def _check_nomorobo(phone_number: str) -> bool:
         )
 
         if response.status_code == 200:
-            data  = response.json()
-            score = data.get("score", 0)  # 1 = robocall, 0 = clean
+            data = response.json()
+            # Nomorobo returns 1 for robocalls and 0 for clean numbers.
+            score = data.get("score", 0)
             logger.info(f"Nomorobo — {phone_number}: score={score}")
             return score == 1
 
-    except Exception as e:
-        logger.error(f"Nomorobo check failed for {phone_number}: {e}")
+    except RequestException as exc:
+        logger.error(f"Nomorobo check failed for {phone_number}: {exc}")
+        return None
+    except Exception as exc:
+        logger.error(f"Nomorobo check failed for {phone_number}: {exc}")
+        return None
 
     return False
 

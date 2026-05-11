@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SpamFacker — Annoy & Destroy</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --black: #050505;
+    --red: #ff1a1a;
+    --red-dim: #8b0000;
+    --yellow: #ffe600;
+    --white: #f0ede6;
+    --grey: #1a1a1a;
+    --grey2: #2a2a2a;
+    --mono: 'Share Tech Mono', monospace;
+    --display: 'Bebas Neue', sans-serif;
+    --body: 'Space Mono', monospace;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--black);
+    color: var(--white);
+    font-family: var(--body);
+    font-size: 13px;
+    overflow-x: hidden;
+    cursor: crosshair;
+  }
+
+  /* SCANLINE OVERLAY */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.08) 2px,
+      rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* NOISE TEXTURE */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 9998;
+    opacity: 0.4;
+  }
+
+  /* ── HEADER ── */
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 40px;
+    border-bottom: 1px solid var(--red-dim);
+    background: rgba(5,5,5,0.95);
+    backdrop-filter: blur(4px);
+  }
+
+  .logo {
+    font-family: var(--display);
+    font-size: 28px;
+    letter-spacing: 3px;
+    color: var(--red);
+    text-shadow: 0 0 20px rgba(255,26,26,0.5);
+    position: relative;
+  }
+
+  .logo::after {
+    content: '™';
+    font-size: 11px;
+    vertical-align: super;
+    color: var(--yellow);
+    margin-left: 2px;
+  }
+
+  nav { display: flex; gap: 24px; align-items: center; }
+
+  nav a {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--white);
+    text-decoration: none;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    opacity: 0.6;
+    transition: opacity 0.2s, color 0.2s;
+  }
+
+  nav a:hover { opacity: 1; color: var(--yellow); }
+
+  .nav-cta {
+    background: var(--red);
+    color: var(--black) !important;
+    opacity: 1 !important;
+    padding: 8px 16px;
+    font-weight: 700;
+    transition: background 0.2s, transform 0.1s !important;
+  }
+
+  .nav-cta:hover { background: var(--yellow) !important; transform: translateY(-1px); }
+
+  /* ── HERO ── */
+  .hero {
+    min-height: 92vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 80px 40px 60px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hero-bg {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 60% 50% at 70% 50%, rgba(139,0,0,0.15) 0%, transparent 70%),
+      radial-gradient(ellipse 30% 30% at 20% 80%, rgba(255,230,0,0.04) 0%, transparent 60%);
+  }
+
+  .hero-eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 4px;
+    color: var(--red);
+    text-transform: uppercase;
+    margin-bottom: 20px;
+    animation: fadeUp 0.6s ease both;
+  }
+
+  .hero-eyebrow::before { content: '// '; opacity: 0.4; }
+
+  .hero-title {
+    font-family: var(--display);
+    font-size: clamp(72px, 12vw, 160px);
+    line-height: 0.9;
+    letter-spacing: 4px;
+    color: var(--white);
+    margin-bottom: 8px;
+    animation: fadeUp 0.6s 0.1s ease both;
+    position: relative;
+  }
+
+  .hero-title .red { color: var(--red); text-shadow: 0 0 40px rgba(255,26,26,0.4); }
+
+  .hero-title-sub {
+    font-family: var(--display);
+    font-size: clamp(28px, 4vw, 56px);
+    letter-spacing: 8px;
+    color: var(--yellow);
+    margin-bottom: 40px;
+    animation: fadeUp 0.6s 0.2s ease both;
+  }
+
+  .hero-desc {
+    max-width: 520px;
+    font-size: 13px;
+    line-height: 1.9;
+    color: rgba(240,237,230,0.7);
+    margin-bottom: 48px;
+    animation: fadeUp 0.6s 0.3s ease both;
+  }
+
+  .hero-desc strong { color: var(--yellow); font-weight: 700; }
+
+  .hero-actions {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    animation: fadeUp 0.6s 0.4s ease both;
+  }
+
+  .btn-primary {
+    font-family: var(--display);
+    font-size: 20px;
+    letter-spacing: 3px;
+    background: var(--red);
+    color: var(--black);
+    border: none;
+    padding: 16px 36px;
+    cursor: crosshair;
+    transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
+    text-decoration: none;
+    display: inline-block;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .btn-primary::before {
+    content: '';
+    position: absolute;
+    top: 0; left: -100%;
+    width: 100%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+    transition: left 0.4s;
+  }
+
+  .btn-primary:hover::before { left: 100%; }
+  .btn-primary:hover { background: var(--yellow); transform: translateY(-2px); box-shadow: 0 8px 32px rgba(255,26,26,0.4); }
+
+  .btn-secondary {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 3px;
+    background: transparent;
+    color: var(--white);
+    border: 1px solid rgba(240,237,230,0.2);
+    padding: 16px 28px;
+    cursor: crosshair;
+    text-transform: uppercase;
+    text-decoration: none;
+    transition: border-color 0.2s, color 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-secondary:hover { border-color: var(--yellow); color: var(--yellow); }
+
+  /* TICKER */
+  .ticker {
+    position: absolute;
+    bottom: 0;
+    left: 0; right: 0;
+    background: var(--red);
+    padding: 8px 0;
+    overflow: hidden;
+  }
+
+  .ticker-track {
+    display: flex;
+    gap: 60px;
+    animation: ticker 25s linear infinite;
+    white-space: nowrap;
+  }
+
+  .ticker-item {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 3px;
+    color: var(--black);
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .ticker-item::before { content: '◆ '; }
+
+  @keyframes ticker {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+
+  /* ── STATS BAR ── */
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    border-top: 1px solid var(--grey2);
+    border-bottom: 1px solid var(--grey2);
+  }
+
+  .stat {
+    padding: 32px 40px;
+    border-right: 1px solid var(--grey2);
+    position: relative;
+    overflow: hidden;
+    transition: background 0.3s;
+  }
+
+  .stat:last-child { border-right: none; }
+  .stat:hover { background: var(--grey); }
+
+  .stat-number {
+    font-family: var(--display);
+    font-size: 52px;
+    letter-spacing: 2px;
+    color: var(--red);
+    line-height: 1;
+    text-shadow: 0 0 20px rgba(255,26,26,0.3);
+  }
+
+  .stat-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: rgba(240,237,230,0.4);
+    text-transform: uppercase;
+    margin-top: 6px;
+  }
+
+  /* ── SECTION SHARED ── */
+  section { padding: 100px 40px; }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 5px;
+    color: var(--red);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    opacity: 0.8;
+  }
+
+  .section-title {
+    font-family: var(--display);
+    font-size: clamp(40px, 5vw, 72px);
+    letter-spacing: 3px;
+    line-height: 1;
+    margin-bottom: 60px;
+  }
+
+  /* ── AGENTS ── */
+  .agents-section { background: var(--grey); }
+
+  .agents-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1px;
+    background: var(--grey2);
+    border: 1px solid var(--grey2);
+  }
+
+  .agent-card {
+    background: var(--grey);
+    padding: 36px 32px;
+    position: relative;
+    overflow: hidden;
+    transition: background 0.3s;
+    cursor: crosshair;
+  }
+
+  .agent-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px; height: 0;
+    background: var(--red);
+    transition: height 0.3s;
+  }
+
+  .agent-card:hover { background: #222; }
+  .agent-card:hover::before { height: 100%; }
+
+  .agent-id {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--red);
+    margin-bottom: 12px;
+    opacity: 0.7;
+  }
+
+  .agent-name {
+    font-family: var(--display);
+    font-size: 36px;
+    letter-spacing: 2px;
+    color: var(--white);
+    margin-bottom: 4px;
+  }
+
+  .agent-archetype {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--yellow);
+    margin-bottom: 20px;
+    letter-spacing: 1px;
+  }
+
+  .agent-tactic {
+    font-size: 12px;
+    line-height: 1.8;
+    color: rgba(240,237,230,0.6);
+    border-left: 2px solid var(--grey2);
+    padding-left: 16px;
+  }
+
+  .agent-tactic strong { color: var(--white); display: block; margin-bottom: 4px; }
+
+  /* ── PRICING ── */
+  .pricing-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 24px;
+  }
+
+  .pricing-card {
+    border: 1px solid var(--grey2);
+    padding: 40px 32px;
+    position: relative;
+    transition: border-color 0.3s, transform 0.2s;
+    background: #0a0a0a;
+  }
+
+  .pricing-card:hover { border-color: var(--red); transform: translateY(-4px); }
+
+  .pricing-card.featured {
+    border-color: var(--yellow);
+    background: #0f0d00;
+  }
+
+  .pricing-badge {
+    position: absolute;
+    top: -1px; right: 24px;
+    background: var(--yellow);
+    color: var(--black);
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 2px;
+    padding: 4px 10px;
+    text-transform: uppercase;
+    font-weight: 700;
+  }
+
+  .pricing-tier {
+    font-family: var(--display);
+    font-size: 32px;
+    letter-spacing: 3px;
+    margin-bottom: 8px;
+  }
+
+  .pricing-price {
+    font-family: var(--display);
+    font-size: 56px;
+    color: var(--red);
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .pricing-card.featured .pricing-price { color: var(--yellow); }
+
+  .pricing-period {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: rgba(240,237,230,0.3);
+    letter-spacing: 2px;
+    margin-bottom: 32px;
+  }
+
+  .pricing-features {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 36px;
+  }
+
+  .pricing-features li {
+    font-size: 12px;
+    color: rgba(240,237,230,0.7);
+    display: flex;
+    gap: 10px;
+    line-height: 1.5;
+  }
+
+  .pricing-features li::before {
+    content: '→';
+    color: var(--red);
+    flex-shrink: 0;
+  }
+
+  .pricing-card.featured .pricing-features li::before { color: var(--yellow); }
+
+  .btn-tier {
+    width: 100%;
+    font-family: var(--display);
+    font-size: 18px;
+    letter-spacing: 3px;
+    padding: 14px;
+    border: 1px solid var(--red);
+    background: transparent;
+    color: var(--red);
+    cursor: crosshair;
+    transition: background 0.2s, color 0.2s;
+    text-align: center;
+    display: block;
+    text-decoration: none;
+  }
+
+  .btn-tier:hover { background: var(--red); color: var(--black); }
+
+  .pricing-card.featured .btn-tier {
+    background: var(--yellow);
+    color: var(--black);
+    border-color: var(--yellow);
+  }
+
+  .pricing-card.featured .btn-tier:hover { background: #fff; border-color: #fff; }
+
+  /* ── LEADERBOARD ── */
+  .leaderboard-section { background: var(--grey); }
+
+  .leaderboard-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+  }
+
+  .leaderboard-table thead tr {
+    border-bottom: 1px solid var(--red);
+  }
+
+  .leaderboard-table th {
+    text-align: left;
+    font-size: 9px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: var(--red);
+    padding: 0 0 16px;
+    font-weight: 400;
+  }
+
+  .leaderboard-table td {
+    padding: 18px 0;
+    font-size: 12px;
+    color: rgba(240,237,230,0.7);
+    border-bottom: 1px solid rgba(42,42,42,0.8);
+    transition: color 0.2s;
+  }
+
+  .leaderboard-table tr:hover td { color: var(--white); }
+
+  .rank {
+    font-family: var(--display);
+    font-size: 28px;
+    color: var(--grey2);
+    width: 60px;
+  }
+
+  .rank.gold { color: var(--yellow); }
+  .rank.silver { color: #aaa; }
+  .rank.bronze { color: #cd7f32; }
+
+  .duration { color: var(--red) !important; font-weight: 700; }
+
+  .agent-tag {
+    font-size: 9px;
+    letter-spacing: 2px;
+    padding: 3px 8px;
+    border: 1px solid var(--grey2);
+    color: rgba(240,237,230,0.5);
+    text-transform: uppercase;
+  }
+
+  /* ── FOOTER ── */
+  footer {
+    border-top: 1px solid var(--grey2);
+    padding: 60px 40px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 40px;
+    background: #030303;
+  }
+
+  .footer-brand .logo { font-size: 36px; display: block; margin-bottom: 12px; }
+
+  .footer-tagline {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: rgba(240,237,230,0.3);
+    line-height: 1.8;
+    letter-spacing: 1px;
+  }
+
+  .footer-col-title {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 4px;
+    color: var(--red);
+    text-transform: uppercase;
+    margin-bottom: 20px;
+  }
+
+  .footer-links { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+
+  .footer-links a {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: rgba(240,237,230,0.4);
+    text-decoration: none;
+    transition: color 0.2s;
+    letter-spacing: 1px;
+  }
+
+  .footer-links a:hover { color: var(--yellow); }
+
+  .footer-bottom {
+    border-top: 1px solid var(--grey2);
+    padding: 20px 40px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #030303;
+  }
+
+  .footer-bottom p {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: rgba(240,237,230,0.2);
+  }
+
+  .status-dot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: rgba(240,237,230,0.3);
+    letter-spacing: 2px;
+  }
+
+  .status-dot::before {
+    content: '';
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #00ff41;
+    box-shadow: 0 0 8px #00ff41;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ── GLITCH ── */
+  .glitch {
+    position: relative;
+  }
+
+  .glitch::before, .glitch::after {
+    content: attr(data-text);
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    font-family: inherit;
+    font-size: inherit;
+    letter-spacing: inherit;
+    line-height: inherit;
+  }
+
+  .glitch::before {
+    color: var(--red);
+    clip-path: polygon(0 30%, 100% 30%, 100% 50%, 0 50%);
+    animation: glitch1 4s infinite;
+    opacity: 0.6;
+  }
+
+  .glitch::after {
+    color: var(--yellow);
+    clip-path: polygon(0 60%, 100% 60%, 100% 80%, 0 80%);
+    animation: glitch2 4s infinite;
+    opacity: 0.4;
+  }
+
+  @keyframes glitch1 {
+    0%, 90%, 100% { transform: translateX(0); }
+    92% { transform: translateX(-4px); }
+    94% { transform: translateX(4px); }
+    96% { transform: translateX(-2px); }
+  }
+
+  @keyframes glitch2 {
+    0%, 88%, 100% { transform: translateX(0); }
+    90% { transform: translateX(3px); }
+    93% { transform: translateX(-3px); }
+    96% { transform: translateX(1px); }
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── DIVIDER ── */
+  .divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--red), transparent);
+    margin: 0 40px;
+    opacity: 0.4;
+  }
+
+  /* ── MASCOT ── */
+  .mascot-area {
+    position: absolute;
+    right: 40px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.07;
+    font-size: 280px;
+    line-height: 1;
+    pointer-events: none;
+    user-select: none;
+    animation: mascotFloat 6s ease-in-out infinite;
+  }
+
+  @keyframes mascotFloat {
+    0%, 100% { transform: translateY(-50%) rotate(-2deg); }
+    50% { transform: translateY(-53%) rotate(2deg); }
+  }
+
+  @media (max-width: 768px) {
+    header { padding: 12px 20px; }
+    .hero { padding: 60px 20px 80px; }
+    .stats-bar { grid-template-columns: repeat(2, 1fr); }
+    section { padding: 60px 20px; }
+    footer { grid-template-columns: 1fr; padding: 40px 20px; }
+    .footer-bottom { padding: 16px 20px; flex-direction: column; gap: 8px; }
+    .mascot-area { display: none; }
+    nav a:not(.nav-cta) { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">SpamFacker</div>
+  <nav>
+    <a href="#agents">Agents</a>
+    <a href="#pricing">Pricing</a>
+    <a href="#saltmines">The Salt Mines</a>
+    <a href="#pricing" class="nav-cta">UNLEASH THE KRAKEN</a>
+  </nav>
+</header>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-bg"></div>
+  <div class="mascot-area">☎</div>
+  <div style="position:relative; z-index:1">
+    <p class="hero-eyebrow">Spite-Tech // Anti-Scam Warfare Platform</p>
+    <h1 class="hero-title">
+      <span class="glitch" data-text="ANNOY">ANNOY</span><br>
+      <span class="red glitch" data-text="& DESTROY">&amp; DESTROY</span>
+    </h1>
+    <p class="hero-title-sub">Spam Callers Meet Their End</p>
+    <p class="hero-desc">
+      SpamFacker deploys <strong>AI agents</strong> against your spam callers — autonomously.
+      They called you first. Now they're stuck in a <strong>45-minute psychological labyrinth</strong>
+      with no exit. Because <em>"Go Away"</em> doesn't work, but <strong>Infinite Hold</strong> does.
+    </p>
+    <div class="hero-actions">
+      <a href="#pricing" class="btn-primary">UNLEASH THE KRAKEN</a>
+      <a href="#saltmines" class="btn-secondary">☠ View The Salt Mines</a>
+    </div>
+  </div>
+  <div class="ticker">
+    <div class="ticker-track">
+      <span class="ticker-item">47,291 scammer minutes wasted this week</span>
+      <span class="ticker-item">Mildred's personal best: 58 minutes</span>
+      <span class="ticker-item">Gary caused 3 hangups in under 90 seconds</span>
+      <span class="ticker-item">Timmy asked "but why?" 847 times today</span>
+      <span class="ticker-item">Bruce threatened his Senator son 2,041 times</span>
+      <span class="ticker-item">47,291 scammer minutes wasted this week</span>
+      <span class="ticker-item">Mildred's personal best: 58 minutes</span>
+      <span class="ticker-item">Gary caused 3 hangups in under 90 seconds</span>
+      <span class="ticker-item">Timmy asked "but why?" 847 times today</span>
+      <span class="ticker-item">Bruce threatened his Senator son 2,041 times</span>
+    </div>
+  </div>
+</section>
+
+<!-- STATS -->
+<div class="stats-bar">
+  <div class="stat">
+    <div class="stat-number">2.4M</div>
+    <div class="stat-label">Minutes Wasted</div>
+  </div>
+  <div class="stat">
+    <div class="stat-number">5</div>
+    <div class="stat-label">AI Agents Deployed</div>
+  </div>
+  <div class="stat">
+    <div class="stat-number">47m</div>
+    <div class="stat-label">Avg. Call Duration</div>
+  </div>
+  <div class="stat">
+    <div class="stat-number">99%</div>
+    <div class="stat-label">Scammer Rage Rate</div>
+  </div>
+</div>
+
+<!-- AGENTS -->
+<section class="agents-section" id="agents">
+  <p class="section-label">// Vengeance Roster</p>
+  <h2 class="section-title">THE AGENTS</h2>
+  <div class="agents-grid">
+
+    <div class="agent-card">
+      <div class="agent-id">AGENT-001 // ACTIVE</div>
+      <div class="agent-name">MILDRED</div>
+      <div class="agent-archetype">Sweet Grandma</div>
+      <div class="agent-tactic">
+        <strong>The Verbal Labyrinth</strong>
+        Polite, partially deaf, and perpetually searching for her "spectacles" and "the plastic card." No scammer has ever successfully collected from Mildred.
+      </div>
+    </div>
+
+    <div class="agent-card">
+      <div class="agent-id">AGENT-002 // ACTIVE</div>
+      <div class="agent-name">GARY</div>
+      <div class="agent-archetype">Angry Foreman</div>
+      <div class="agent-tactic">
+        <strong>The Decibel Destroyer</strong>
+        Background jackhammers, yelling at coworkers, and constant interruptions. Forces the scammer to repeat everything at full volume — forever.
+      </div>
+    </div>
+
+    <div class="agent-card">
+      <div class="agent-id">AGENT-003 // ACTIVE</div>
+      <div class="agent-name">TIMMY</div>
+      <div class="agent-archetype">Slow Processor</div>
+      <div class="agent-tactic">
+        <strong>The Eternal Why</strong>
+        3-second delay on every response. Interprets all technical terms with devastating literalness. "What is a computer?" — Timmy, always.
+      </div>
+    </div>
+
+    <div class="agent-card">
+      <div class="agent-id">AGENT-004 // ACTIVE</div>
+      <div class="agent-name">SHANIKA</div>
+      <div class="agent-archetype">Firecracker</div>
+      <div class="agent-tactic">
+        <strong>The Volume Wall</strong>
+        Aggressive interruptions and extended tangents about her trifling ex dominate the call. The scammer never gets a full sentence in.
+      </div>
+    </div>
+
+    <div class="agent-card">
+      <div class="agent-id">AGENT-005 // ACTIVE</div>
+      <div class="agent-name">BRUCE</div>
+      <div class="agent-archetype">Grumpy Veteran</div>
+      <div class="agent-tactic">
+        <strong>The Short Fuse</strong>
+        Impatient, verbally combative, and threatens to call his "son the Senator" every 30 seconds. Has never actually called his son.
+      </div>
+    </div>
+
+    <div class="agent-card" style="background:#0a0a0a; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:12px; min-height:200px;">
+      <div style="font-family:var(--display); font-size:48px; color:var(--grey2);">+</div>
+      <div style="font-family:var(--mono); font-size:10px; letter-spacing:3px; color:rgba(240,237,230,0.2); text-transform:uppercase;">More Agents Coming</div>
+      <div style="font-family:var(--mono); font-size:9px; color:var(--red); letter-spacing:2px;">VaaS Enterprise Only</div>
+    </div>
+
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- PRICING -->
+<section id="pricing">
+  <p class="section-label">// Schadenfreude Subscription Model</p>
+  <h2 class="section-title">CHOOSE YOUR<br><span style="color:var(--red)">WEAPON</span></h2>
+  <div class="pricing-grid">
+
+    <div class="pricing-card">
+      <div class="pricing-tier">Free</div>
+      <div class="pricing-price">$0</div>
+      <div class="pricing-period">/month — forever</div>
+      <ul class="pricing-features">
+        <li>10 spam intercepts/month</li>
+        <li>3 agents: Mildred, Timmy, Gary</li>
+        <li>Basic call log (duration + agent)</li>
+        <li>SpamFacker honeypot number</li>
+      </ul>
+      <a href="#" class="btn-tier">GET STARTED</a>
+    </div>
+
+    <div class="pricing-card">
+      <div class="pricing-tier">Chaos</div>
+      <div class="pricing-price">$9</div>
+      <div class="pricing-period">/month</div>
+      <ul class="pricing-features">
+        <li>Unlimited intercepts</li>
+        <li>All 5 agents + escalation mode</li>
+        <li>Full call recordings in dashboard</li>
+        <li>Personal leaderboard stats</li>
+        <li>Bad Connection Gaslight mode</li>
+      </ul>
+      <a href="#" class="btn-tier">DEPLOY CHAOS</a>
+    </div>
+
+    <div class="pricing-card featured">
+      <div class="pricing-badge">Most Popular</div>
+      <div class="pricing-tier">Schadenfreude</div>
+      <div class="pricing-price">$19</div>
+      <div class="pricing-period">/month</div>
+      <ul class="pricing-features">
+        <li>Everything in Chaos</li>
+        <li>Live listen-in dashboard</li>
+        <li>Bounty for Tears — earn credits per 10min wasted</li>
+        <li>Monthly Hall of Shame digest</li>
+        <li>Priority agent assignment</li>
+      </ul>
+      <a href="#" class="btn-tier">MAXIMUM SPITE</a>
+    </div>
+
+    <div class="pricing-card">
+      <div class="pricing-tier">VaaS</div>
+      <div class="pricing-price">$99</div>
+      <div class="pricing-period">/seat/month — Enterprise</div>
+      <ul class="pricing-features">
+        <li>Vengeance-as-a-Service</li>
+        <li>Custom "Confused HR Director" bot</li>
+        <li>Multi-user dashboard + SLA</li>
+        <li>Jurisdiction-aware recording compliance</li>
+        <li>Corporate spam line rerouting</li>
+      </ul>
+      <a href="#" class="btn-tier">CONTACT SALES</a>
+    </div>
+
+  </div>
+</section>
+
+<!-- LEADERBOARD -->
+<section class="leaderboard-section" id="saltmines">
+  <p class="section-label">// Global Rankings</p>
+  <h2 class="section-title">THE SALT<br><span style="color:var(--yellow)">MINES</span></h2>
+  <table class="leaderboard-table">
+    <thead>
+      <tr>
+        <th>Rank</th>
+        <th>Handle</th>
+        <th>Agent Used</th>
+        <th>Duration</th>
+        <th>Outcome</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="rank gold">01</td>
+        <td>@wraith_ri</td>
+        <td><span class="agent-tag">Mildred</span></td>
+        <td class="duration">58m 14s</td>
+        <td>Scammer cried. Hung up.</td>
+      </tr>
+      <tr>
+        <td class="rank silver">02</td>
+        <td>@operator_x</td>
+        <td><span class="agent-tag">Timmy</span></td>
+        <td class="duration">47m 02s</td>
+        <td>Asked "why" 312 times.</td>
+      </tr>
+      <tr>
+        <td class="rank bronze">03</td>
+        <td>@void_caller</td>
+        <td><span class="agent-tag">Bruce</span></td>
+        <td class="duration">41m 55s</td>
+        <td>Senator son threatened 83×.</td>
+      </tr>
+      <tr>
+        <td class="rank">04</td>
+        <td>@deepnorth</td>
+        <td><span class="agent-tag">Gary</span></td>
+        <td class="duration">38m 30s</td>
+        <td>Scammer asked Gary to "calm down."</td>
+      </tr>
+      <tr>
+        <td class="rank">05</td>
+        <td>@lucius-log</td>
+        <td><span class="agent-tag">Shanika</span></td>
+        <td class="duration">33m 17s</td>
+        <td>Never got a word in. Disconnected.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-brand">
+    <span class="logo">SpamFacker</span>
+    <p class="footer-tagline">
+      Because "Go Away" doesn't work,<br>
+      but Infinite Hold does.<br><br>
+      © 2026 SpamFacker / Lucius Engine<br>
+      Built with spite. Deployed with purpose.
+    </p>
+  </div>
+  <div>
+    <p class="footer-col-title">Product</p>
+    <ul class="footer-links">
+      <li><a href="#">The Agents</a></li>
+      <li><a href="#">Pricing</a></li>
+      <li><a href="#">The Salt Mines</a></li>
+      <li><a href="#">Hall of Shame</a></li>
+      <li><a href="#">VaaS Enterprise</a></li>
+    </ul>
+  </div>
+  <div>
+    <p class="footer-col-title">Legal & Support</p>
+    <ul class="footer-links">
+      <li><a href="#">Terms of Service</a></li>
+      <li><a href="#">Privacy Policy</a></li>
+      <li><a href="#">Recording Compliance</a></li>
+      <li><a href="#">The Salt Mines (Help)</a></li>
+      <li><a href="#">Contact</a></li>
+    </ul>
+  </div>
+</footer>
+<div class="footer-bottom">
+  <p>SpamFacker v1.0 // Lucius Engine Framework // All intercepts are inbound-initiated.</p>
+  <div class="status-dot">Systems Operational</div>
+</div>
+
+</body>
+</html>

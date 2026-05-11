@@ -23,7 +23,12 @@ Expose locally with ngrok:
 
 import os
 import logging
-from flask import Flask, request, Response, send_from_directory
+from pathlib import Path
+from urllib.parse import urlencode
+
+from flask import Flask, Response, jsonify, request, send_from_directory
+from twilio.base.exceptions import TwilioRestException
+from twilio.request_validator import RequestValidator
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Play
 from dotenv import load_dotenv
@@ -35,19 +40,56 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def _require_env(name: str) -> str:
+    value = os.getenv(name)
+    if value:
+        return value
+    raise RuntimeError(f"Missing required environment variable: {name}")
+
 # --- Twilio credentials (set in .env) ---
-ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-AUTH_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN")
-MY_TWILIO_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")   # Your Twilio number, e.g. +14015550100
+ACCOUNT_SID = _require_env("TWILIO_ACCOUNT_SID")
+AUTH_TOKEN = _require_env("TWILIO_AUTH_TOKEN")
+MY_TWILIO_NUMBER = _require_env("TWILIO_PHONE_NUMBER")
+# BASE_URL must exactly match the webhook URL configured in Twilio and must not end with a trailing slash.
+BASE_URL = _require_env("BASE_URL").rstrip("/")
 
 # Rick Roll audio URL - publicly hosted MP3.
 # You can replace this with any audio file URL you host (e.g. Cloudflare R2, S3).
-RICK_ROLL_URL = os.getenv(
-    "RICK_ROLL_URL",
-    "http://localhost:5000/audio/snippet.mp3"
-)
+RICK_ROLL_URL = os.getenv("RICK_ROLL_URL", f"{BASE_URL}/audio/snippet.mp3")
 
 client = Client(ACCOUNT_SID, AUTH_TOKEN)
+request_validator = RequestValidator(AUTH_TOKEN)
+STATIC_DIR = Path(app.root_path) / "static"
+
+
+def _build_request_url() -> str:
+    if request.args:
+        return f"{BASE_URL}{request.path}?{urlencode(request.args, doseq=True)}"
+    return f"{BASE_URL}{request.path}"
+
+
+def _hangup_twiml_response(status_code: int = 200) -> Response:
+    resp = VoiceResponse()
+    resp.hangup()
+    return Response(str(resp), status=status_code, mimetype="text/xml")
+
+
+def _twiml_response(response: VoiceResponse, status_code: int = 200) -> Response:
+    return Response(str(response), status=status_code, mimetype="text/xml")
+
+
+def _validate_twilio_request() -> bool:
+    signature = request.headers.get("X-Twilio-Signature", "")
+    return request_validator.validate(_build_request_url(), request.form, signature)
+
+
+@app.after_request
+def add_cors_headers(response: Response) -> Response:
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Twilio-Signature"
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +97,16 @@ client = Client(ACCOUNT_SID, AUTH_TOKEN)
 # ---------------------------------------------------------------------------
 @app.route("/audio/snippet.mp3", methods=["GET"])
 def audio_snippet():
+    snippet_path = STATIC_DIR / "snippet.mp3"
+    if not snippet_path.is_file():
+        logger.error("Audio snippet missing at %s", snippet_path)
+        return jsonify({"error": "snippet.mp3 not found"}), 404
     return send_from_directory("static", "snippet.mp3", mimetype="audio/mpeg")
+
+
+@app.route("/health", methods=["GET"])
+def health() -> Response:
+    return jsonify({"status": "ok"})
 
 
 # ---------------------------------------------------------------------------
@@ -67,31 +118,32 @@ def incoming_call():
     Twilio hits this endpoint the moment a call arrives.
     We check if it's spam, then decide what to do.
     """
-    caller   = request.form.get("From", "Unknown")
-    call_sid = request.form.get("CallSid", "")
+    if not _validate_twilio_request():
+        logger.warning("Rejected invalid Twilio signature for /incoming")
+        return _hangup_twiml_response(status_code=403)
 
-    logger.info(f"Incoming call from: {caller} | SID: {call_sid}")
+    try:
+        caller = request.form.get("From", "Unknown")
+        call_sid = request.form.get("CallSid", "")
 
-    resp = VoiceResponse()
+        logger.info("Incoming call from: %s | SID: %s", caller, call_sid)
 
-    if is_spam(caller):
-        logger.info(f"SPAM DETECTED: {caller} — initiating callback trap")
+        resp = VoiceResponse()
 
-        # Tell the spammer to hold (they usually hang up fast; this buys time)
-        resp.say("Please hold.", voice="alice")
-        resp.pause(length=2)
+        if is_spam(caller):
+            logger.info("SPAM DETECTED: %s - initiating callback trap", caller)
 
-        # Fire the callback in the background — trap is set
-        _launch_callback(caller)
+            resp.say("Please hold.", voice="alice")
+            resp.pause(length=2)
+            _launch_callback(caller)
+            resp.hangup()
+        else:
+            resp.say("Thank you for calling. Connecting you now.", voice="alice")
 
-        # Hang up our end; the REAL punishment starts on their callback
-        resp.hangup()
-    else:
-        # Legitimate call — ring through normally (or handle however you like)
-        resp.say("Thank you for calling. Connecting you now.", voice="alice")
-        # TODO: add <Dial> here if you want to forward to a real number
-
-    return Response(str(resp), mimetype="text/xml")
+        return _twiml_response(resp)
+    except Exception:
+        logger.exception("Internal error while handling /incoming")
+        return _hangup_twiml_response()
 
 
 # ---------------------------------------------------------------------------
@@ -107,16 +159,22 @@ def rickroll():
     The <Play loop="0"> instruction is like a broken record —
     "0" means loop forever in Twilio's TwiML spec.
     """
-    caller = request.form.get("To", "Unknown")
-    logger.info(f"Spammer {caller} answered callback — Rick Roll engaged 🎵")
+    if not _validate_twilio_request():
+        logger.warning("Rejected invalid Twilio signature for /rickroll")
+        return _hangup_twiml_response(status_code=403)
 
-    resp = VoiceResponse()
-    resp.say("We've been expecting you.", voice="alice")
+    try:
+        caller = request.form.get("To", "Unknown")
+        logger.info("Spammer %s answered callback - Rick Roll engaged", caller)
 
-    # loop=0 means infinite loop — they're stuck until THEY hang up
-    resp.append(Play(RICK_ROLL_URL, loop=0))
+        resp = VoiceResponse()
+        resp.say("We've been expecting you.", voice="alice")
+        resp.append(Play(RICK_ROLL_URL, loop=0))
 
-    return Response(str(resp), mimetype="text/xml")
+        return _twiml_response(resp)
+    except Exception:
+        logger.exception("Internal error while handling /rickroll")
+        return _hangup_twiml_response()
 
 
 # ---------------------------------------------------------------------------
@@ -127,19 +185,24 @@ def _launch_callback(spam_number: str):
     Dials the spammer back using Twilio's REST API.
     When they answer, Twilio hits /rickroll and the loop begins.
     """
-    base_url = os.getenv("BASE_URL")  # e.g. https://abc123.ngrok.io
-
     try:
         call = client.calls.create(
             to=spam_number,
             from_=MY_TWILIO_NUMBER,
-            url=f"{base_url}/rickroll",   # Twilio fetches TwiML from here on connect
-            status_callback=f"{base_url}/status",
+            url=f"{BASE_URL}/rickroll",
+            status_callback=f"{BASE_URL}/status",
             status_callback_event=["completed"],
         )
-        logger.info(f"Callback launched → SID: {call.sid}")
-    except Exception as e:
-        logger.error(f"Failed to launch callback to {spam_number}: {e}")
+        logger.info("Callback launched - SID: %s", call.sid)
+    except TwilioRestException as exc:
+        logger.error(
+            "Twilio callback failed for %s - code=%s message=%s",
+            spam_number,
+            exc.code,
+            exc.msg,
+        )
+    except Exception:
+        logger.exception("Unexpected error while launching callback to %s", spam_number)
 
 
 # ---------------------------------------------------------------------------
@@ -152,14 +215,13 @@ def call_status():
     duration = request.form.get("CallDuration", "0")
     to       = request.form.get("To")
 
-    logger.info(f"Call {sid} to {to} ended — Status: {status} | Duration: {duration}s")
+    logger.info("Call %s to %s ended - Status: %s | Duration: %ss", sid, to, status, duration)
 
     if status == "completed":
-        logger.info(f"Spammer {to} endured {duration} seconds of Rick Astley 🏆")
+        logger.info("Spammer %s endured %s seconds of Rick Astley", to, duration)
 
     return Response("", status=204)
 
 
 if __name__ == "__main__":
-    # Use debug=False in production
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))  # noqa: S104  # nosec B104
