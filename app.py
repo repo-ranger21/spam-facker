@@ -184,11 +184,14 @@ def respond():
     # Get or create call state
     state = get_state(call_sid)
     if not state:
-        # Edge case: state lost (e.g. worker restart) — reassign gracefully
-        logger.warning(f"[{call_sid}] No state found — reassigning agent")
+        logger.warning(f"[{call_sid}] State lost — reassigning agent")
         agent = assign_agent(call_sid)
+        state = get_state(call_sid)
     else:
         agent = state["agent"]
+
+    # Voice consistency guard — never fall back to Twilio default
+    voice = agent.get("voice", "Polly.Kendra")
 
     # Handle empty or low-confidence STT
     if not speech_result or confidence < 0.3:
@@ -226,7 +229,7 @@ def respond():
         enhanced=True,
         language="en-US",
     )
-    gather.say(reply, voice=agent["voice"])
+    gather.say(reply, voice=voice)
     resp.append(gather)
 
     # If silence — loop back to /respond which triggers a stall
