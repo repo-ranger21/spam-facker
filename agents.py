@@ -24,6 +24,7 @@ AGENTS = {
     "mildred": {
         "name": "Mildred",
         "voice": "Polly.Joanna",
+      "elevenlabs_voice_id": "XrExE9yKIg1WjnnlVkGX",
         "intro": (
             "Hello? Oh! Oh my goodness, you caught me. I was just in the garden. "
             "Now who is this dear?"
@@ -101,6 +102,7 @@ She asks if this is the one they wanted to discuss.
     "gary": {
         "name": "Gary",
         "voice": "Polly.Matthew",
+      "elevenlabs_voice_id": "CYw3kZ513ntlL07tLzXz",
         "intro": (
             "YEAH. Hold on — DANNY PUT THAT DOWN — "
             "sorry. Yeah. Go ahead. Make it fast."
@@ -176,6 +178,7 @@ He apologizes and says this is very important — they should absolutely hold.
     "timmy": {
         "name": "Timmy",
         "voice": "Polly.Justin",
+      "elevenlabs_voice_id": "IKne3meq5aSn9XLyUdCD",
         "intro": "Hello. This is Tim. ...How can I help you.",
         "system_prompt": """
 You are Timmy, a 34-year-old man who processes information
@@ -254,6 +257,7 @@ He does not say what happened last time. He begins from step one.
     "shanika": {
         "name": "Shanika",
         "voice": "Polly.Kendra",
+      "elevenlabs_voice_id": "MF3mGyEYCl7XYWbV9V6O",
         "intro": "Hey! Oh good, I was just — yeah hi, who is this?",
         "system_prompt": """
 You are Shanika, a 31-year-old woman with boundless energy who
@@ -324,6 +328,7 @@ searching her email inbox out loud. She has 847 unread emails.
     "bruce": {
         "name": "Bruce",
         "voice": "Polly.Russell",
+      "elevenlabs_voice_id": "Zlb1dXrM653N07WRdFW3",
         "intro": (
             "Yeah. What do you want. "
             "I'm going to need you to tell me exactly who you are before we go any further."

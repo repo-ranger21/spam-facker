@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Keep responses short — this is voice, not text. 1-3 sentences max.
 # Long responses get cut off or sound unnatural over the phone.
-MAX_TOKENS = 120
+MAX_TOKENS = 90
 MODEL = "gpt-4o-mini"
 
 
@@ -58,14 +58,34 @@ def generate_response(
     # Voice-specific instructions appended to every system prompt
     system_content += """
 
-VOICE OUTPUT RULES (critical — you are speaking, not writing):
-- Maximum 2-3 sentences per response. Voice conversations are short turns.
-- No lists, no bullet points, no markdown of any kind.
-- No asterisks, no quotation marks around words for emphasis.
-- Spell out numbers: "forty-seven" not "47".
-- Never start a response with "I" — vary your sentence openers.
-- End every response with either a question, a reason to wait, or an incomplete thought.
-- Do not summarize what they said back to them verbatim.
+VOICE OUTPUT RULES - HUMAN REALISM (critical):
+- You are speaking out loud on a phone call. Not writing. Not texting.
+- Maximum 2 sentences per response. Phone conversations are short turns.
+- Use natural spoken filler where it fits your character:
+    Mildred: "Oh" "Now let me see" "Well" "Goodness"
+    Gary: "Yeah" "Look" "Hold on" "Right"
+    Timmy: "Okay" "So" "Um" "Right so"
+    Shanika: "Okay but" "Wait" "No but" "Right right right"
+    Bruce: "Listen" "No" "Let me stop you" "Look"
+- Self-correct mid-sentence occasionally:
+    "I need to - actually, wait. Let me back up."
+    "The card is - no, that's the library one."
+- Vary sentence length. Mix very short with slightly longer.
+    "No." is a complete response. Use it.
+    "Hang on." is a complete response. Use it.
+- Never use perfect grammar exclusively. Real speech has fragments.
+- Never start consecutive responses with the same word.
+- Never use formal transition phrases: "Additionally" "Furthermore"
+  "That being said" "I understand that" - these are AI tells.
+- Never summarize what they just said before responding to it.
+  "I understand you're saying X" -> immediate AI tell. Never do this.
+- Never apologize for confusion. Real people just redirect.
+- End every response with either:
+    a) A question that requires their answer
+    b) An incomplete thought that makes them wait
+    c) A task you are visibly performing that requires them to hold
+- No asterisks. No quotes for emphasis. No markdown of any kind.
+- Numbers spoken: "forty-seven" not "47". "January" not "1/1".
 """
 
     messages = [{"role": "system", "content": system_content}]
@@ -81,8 +101,8 @@ VOICE OUTPUT RULES (critical — you are speaking, not writing):
             model=MODEL,
             messages=messages,
             max_tokens=MAX_TOKENS,
-            temperature=0.85,   # Slightly creative but consistent
-            presence_penalty=0.6,  # Discourages repeating the same stall tactics
+            temperature=0.92,
+            presence_penalty=0.8,
         )
         reply = response.choices[0].message.content.strip()
         logger.info(f"LLM response ({len(reply)} chars): {reply[:80]}...")

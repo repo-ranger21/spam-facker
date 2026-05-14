@@ -23,6 +23,7 @@ Expose locally with ngrok:
 
 import os
 import logging
+import threading
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -36,12 +37,21 @@ from spam_checker import is_spam
 from conversation import assign_agent, get_state, add_exchange, \
     should_escalate, end_call, get_stall_tactic, elapsed_seconds
 from llm import generate_response, generate_stall
+from tts import synthesize, cleanup_old_files
 
 load_dotenv()
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _prewarm_tts(text: str, voice_id: str, call_sid: str):
+    """Pre-generate TTS in background thread - fire and forget."""
+    try:
+        synthesize(text, voice_id, call_sid)
+    except Exception as e:
+        logger.warning(f"[{call_sid}] TTS prewarm failed: {e}")
 
 
 def _require_env(name: str) -> str:
@@ -112,6 +122,16 @@ def health() -> Response:
     return jsonify({"status": "ok"})
 
 
+@app.route("/audio/tts/<filename>", methods=["GET"])
+def serve_tts(filename: str):
+    """Serve ElevenLabs generated TTS files."""
+    safe = filename.replace("..", "").replace("/", "")
+    path = Path("static/tts") / safe
+    if not path.exists():
+        return Response("Not found", status=404)
+    return send_from_directory("static/tts", safe, mimetype="audio/mpeg")
+
+
 # ---------------------------------------------------------------------------
 # Webhook: Twilio calls this when YOUR number receives an incoming call
 # ---------------------------------------------------------------------------
@@ -147,12 +167,20 @@ def incoming_call():
             input="speech",
             action=f"{BASE_URL}/respond",
             method="POST",
-            speech_timeout="auto",
+            speech_timeout=2,
             speech_model="phone_call",
             enhanced=True,
             language="en-US",
+            action_on_empty_result=True,
         )
-        gather.say(agent["intro"], voice=agent["voice"])
+        voice_id = agent.get("elevenlabs_voice_id")
+        tts_path = synthesize(agent["intro"], voice_id, call_sid) if voice_id else None
+
+        if tts_path:
+            audio_url = f"{BASE_URL}/audio/tts/{Path(tts_path).name}"
+            gather.play(audio_url)
+        else:
+            gather.say(agent["intro"], voice=agent["voice"])
         resp.append(gather)
 
         # If they say nothing at all, loop back
@@ -215,6 +243,14 @@ def respond():
         # Store the exchange
         add_exchange(call_sid, speech_result, reply)
 
+        # Pre-warm TTS for likely follow-up (stall tactic) in background
+        stall = get_stall_tactic(call_sid)
+        threading.Thread(
+            target=_prewarm_tts,
+            args=(stall, agent.get("elevenlabs_voice_id", ""), call_sid),
+            daemon=True,
+        ).start()
+
     # Log elapsed time for leaderboard data
     elapsed = elapsed_seconds(call_sid)
     logger.info(f"[{call_sid}] Agent reply ({elapsed}s elapsed): {reply[:80]}")
@@ -224,12 +260,20 @@ def respond():
         input="speech",
         action=f"{BASE_URL}/respond",
         method="POST",
-        speech_timeout="auto",
+        speech_timeout=2,
         speech_model="phone_call",
         enhanced=True,
         language="en-US",
+        action_on_empty_result=True,
     )
-    gather.say(reply, voice=voice)
+    voice_id = agent.get("elevenlabs_voice_id")
+    tts_path = synthesize(reply, voice_id, call_sid) if voice_id else None
+
+    if tts_path:
+        audio_url = f"{BASE_URL}/audio/tts/{Path(tts_path).name}"
+        gather.play(audio_url)
+    else:
+        gather.say(reply, voice=voice)
     resp.append(gather)
 
     # If silence — loop back to /respond which triggers a stall
@@ -315,6 +359,7 @@ def call_status():
             f"Scammer minutes wasted: {int(duration) // 60}m {int(duration) % 60}s"
         )
         end_call(sid)   # Clean up in-memory state
+        cleanup_old_files()
 
     return Response("", status=204)
 
