@@ -1,184 +1,201 @@
 # SpamFacker
 
-SpamFacker is an anti-spam voice platform that deploys AI personas to waste spam callers' time. When a spam call hits your Twilio number, an LLM-powered character answers in real time, keeps the spammer engaged through an infinite conversation loop, and logs every second of their wasted time.
+SpamFacker is a Flask + Twilio voice app that detects likely spam callers and keeps them talking to AI personas instead of to you. The current codebase is centered on inbound call handling: Twilio sends an incoming call to the app, the app scores the caller, and spam calls get routed into a voice conversation loop powered by OpenAI and optional ElevenLabs TTS.
 
-- **Frontend**: static marketing page served from Cloudflare Pages
-- **Backend**: Flask webhook service deployed on Render or Railway, wired to Twilio voice webhooks
+The repo also includes a static landing page for Cloudflare Pages and an experimental callback/Rickroll path in the backend, but the shipped inbound flow is the main implementation.
 
----
-
-## How It Works
+## Current Behavior
 
 ```text
-Inbound call → /incoming (Twilio webhook)
-                    |
-              spam_checker.py (3-layer detection)
-                    |
-          ┌─── Spam ──────────────────────────────────────┐
-          │                                               │
-     assign random AI agent (agents.py)           "Thank you for calling.
-          │                                         Please hold."
-     agent speaks intro line
-          │
-     Gather loop: caller speaks → /respond
-          │
-     llm.py → OpenAI gpt-4o-mini → in-character reply
-          │
-     Twilio speaks reply → Gather again → repeat forever
-          │
-     /status webhook logs duration on call end
+Inbound call -> /incoming
+               |
+               +-> spam_checker.py
+               |    1) manual blocklist
+               |    2) Twilio Lookup spam_risk
+               |    3) Nomorobo (optional)
+               |
+               +-> not spam: polite hold message
+               |
+               +-> spam: assign agent -> intro line -> /respond loop
+                                            |
+                                            +-> llm.py generates reply
+                                            +-> tts.py optionally renders MP3 with ElevenLabs
+                                            +-> Twilio Gather listens again
 ```
 
-**Spam detection layers** (first hit wins):
+Important implementation detail: the current inbound path does not automatically launch the outbound callback trap. The callback helper and `/rickroll` route exist in the code, but they are not wired into `/incoming` today.
 
-| Layer | Method | Notes |
-| ----- | ------ | ----- |
-| 1 | Manual blocklist | Instant, no API cost |
-| 2 | Twilio Lookup `spam_risk` | Score-based, ~$0.01/lookup |
-| 3 | Nomorobo API | Robocall-specific, optional |
+## Features
 
-If Twilio Lookup and Nomorobo are both unavailable, the app falls back to the manual blocklist only and logs a warning.
+- Three-layer spam detection with graceful fallback when paid lookups are unavailable.
+- Five character agents defined in [agents.py](agents.py), each with a persona, intro line, escalation prompt, and fallback tactics.
+- Real-time reply generation through OpenAI in [llm.py](llm.py).
+- Optional ElevenLabs voice playback with local MP3 caching in [tts.py](tts.py).
+- Twilio webhook signature validation for the main voice routes.
+- In-memory per-call state tracking in [conversation.py](conversation.py).
+- Static site assets in [index.html](index.html) and [_headers](_headers).
 
----
+## AI Agents
 
-## AI Voice Agents
+Five personas ship with the app:
 
-Five distinct characters are randomly assigned to each spam call. Every agent has a unique system prompt, voice, intro line, escalation prompt (injected after turn 10), and a set of stall tactics for low-confidence STT input.
+| Agent | Voice | Style |
+| ----- | ----- | ----- |
+| Mildred | Polly.Joanna | Sweet grandmother who mishears everything and never finds the right card |
+| Gary | Polly.Matthew | Construction foreman yelling over a chaotic job site |
+| Timmy | Polly.Justin | Literal, methodical caller who asks endless clarifying questions |
+| Shanika | Polly.Kendra | High-energy interrupter who turns every call into a tangent |
+| Bruce | Polly.Russell | Suspicious retiree with a short fuse and constant authority threats |
 
-| Agent | Voice | Persona |
-| ----- | ----- | ------- |
-| **Mildred** | Polly.Joanna | Sweet 79-year-old grandmother — hard of hearing, perpetually searching for her glasses and "the plastic card" |
-| **Gary** | Polly.Matthew | Construction foreman on a loud job site — can't hear over the jackhammers, always yelling at Danny |
-| **Timmy** | Polly.Justin | Methodical literal thinker — asks what "compromised" means, wants every word spelled out |
-| **Shanika** | Polly.Kendra | Force of nature — cuts them off, goes on tangents about cousin DeShawn, always mid-something |
-| **Bruce** | Polly.Russell | Suspicious retiree who threatens to call his son the Senator every three exchanges |
+Escalation kicks in after turn 10, which pushes the persona into a more time-wasting second mode.
 
-Each agent's escalation prompt shifts the character into a second gear: Mildred thinks this is her doctor's office; Gary needs to dictate a formal complaint but can't find a working pen; Timmy starts re-reading his notes from the beginning because he got step one wrong.
-
----
-
-## Repository Layout
+## Project Layout
 
 ```text
 spam-facker/
-├── app.py              # Flask app, all Twilio webhook routes
-├── agents.py           # Five AI agent definitions (system prompts, voices, tactics)
-├── conversation.py     # In-memory call state (per-call history, turn count, escalation)
-├── llm.py              # OpenAI gpt-4o-mini conversation engine
-├── spam_checker.py     # 3-layer spam detection logic
-├── requirements.txt
-├── .env.example
-├── Procfile            # gunicorn start command for Render/Railway
-├── index.html          # Cloudflare Pages marketing site
-├── _headers            # Cloudflare Pages headers config
-├── APP_ADDITIONS.py    # Reference copy of the routes added to app.py
-└── static/
-    ├── .gitkeep
-    └── snippet.mp3     # gitignored — upload separately if using local audio
+|-- app.py
+|-- agents.py
+|-- conversation.py
+|-- llm.py
+|-- spam_checker.py
+|-- tts.py
+|-- requirements.txt
+|-- .env.example
+|-- Procfile
+|-- index.html
+|-- _headers
+|-- PRODUCT_SPEC.md
+|-- APP_ADDITIONS.py
+`-- static/
+    |-- .gitkeep
+    `-- tts/
 ```
 
----
+## Requirements
 
-## Environment Variables
+- Python 3.11+ recommended.
+- A Twilio account with a voice-capable phone number.
+- An OpenAI API key.
+- An ElevenLabs API key if you want generated audio instead of falling back to Twilio/Polly voices.
+- Optional Nomorobo API key for the third spam-check layer.
 
-| Name | Required | Description |
-| ---- | -------- | ----------- |
-| `TWILIO_ACCOUNT_SID` | Yes | Twilio Account SID — used for Lookup and outbound callbacks |
-| `TWILIO_AUTH_TOKEN` | Yes | Twilio Auth Token — used for REST calls and webhook signature validation |
-| `TWILIO_PHONE_NUMBER` | Yes | Your Twilio number in E.164 format, used as caller ID for outbound calls |
-| `BASE_URL` | Yes | Public HTTPS base URL of the deployed Flask app — must exactly match the Twilio webhook URL, no trailing slash |
-| `OPENAI_API_KEY` | Yes | OpenAI API key for gpt-4o-mini voice agent responses |
-| `RICK_ROLL_URL` | No | Public audio URL to play during callbacks — defaults to `${BASE_URL}/audio/snippet.mp3` |
-| `SPAM_THRESHOLD` | No | Minimum Twilio spam score (0–100) to treat a call as spam — default `75` |
-| `NOMOROBO_API_KEY` | No | Nomorobo API key for robocall lookups |
-| `PORT` | No | Runtime port injected by the host platform — defaults to `5000` locally |
-
----
-
-## API Endpoints
-
-| Endpoint | Method | Purpose |
-| -------- | ------ | ------- |
-| `GET /health` | GET | Health check — returns `{"status": "ok"}` |
-| `/incoming` | POST | Twilio webhook — entry point for all inbound calls |
-| `/respond` | POST | Twilio webhook — LLM conversation loop (called on every speech input) |
-| `/rickroll` | POST | Twilio webhook — plays audio loop to caller on outbound callback |
-| `/status` | POST | Twilio status callback — logs duration, cleans up call state |
-| `/audio/snippet.mp3` | GET | Serves `static/snippet.mp3` if present |
-
----
-
-## Deploy
-
-### Render or Railway
-
-1. Connect the repository.
-2. Let the platform auto-detect Python.
-3. Confirm the start command from [Procfile](Procfile): `web: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120`
-4. Add all required environment variables from [.env.example](.env.example) in the platform dashboard.
-5. Set your Twilio voice webhook for your number to `${BASE_URL}/incoming`.
-6. Deploy and verify `${BASE_URL}/health` returns `{"status": "ok"}`.
-
-> **Single-worker note**: `conversation.py` stores call state in memory. The Procfile sets 2 workers, which is fine for personal use — a call will always hit the same worker in practice on free-tier Render. For multi-worker production deployments, swap the `_calls` dict in `conversation.py` for Redis.
-
-### Cloudflare Pages (marketing site)
-
-1. Connect the repository to Cloudflare Pages.
-2. Set the build command to none.
-3. Set the output directory to `/`.
-4. Ensure [_headers](_headers) is included in the deployment output.
-
----
-
-## Local Development
+## Quick Start
 
 ```powershell
-# Install dependencies
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-
-# Set up environment
 Copy-Item .env.example .env
-# Fill in your real values in .env
+```
 
-# Run the Flask dev server
+Fill in `.env`, then run the app:
+
+```powershell
 python app.py
 ```
 
-To receive real Twilio webhooks locally, expose the server with ngrok and set `BASE_URL` to the public HTTPS URL ngrok provides.
+Health check:
 
-```bash
-ngrok http 5000
-# Then set BASE_URL=https://<your-ngrok-id>.ngrok.io in .env
+```text
+GET http://localhost:5000/health
 ```
 
----
+To test against real Twilio webhooks locally, expose the app with ngrok or a similar tunnel:
 
-## Audio File
+```powershell
+ngrok http 5000
+```
 
-The backend serves `static/snippet.mp3` for the Rick Roll callback loop. That file is gitignored — you need to add it after deploying.
+Set `BASE_URL` to the public HTTPS URL from your tunnel, with no trailing slash.
 
-**Option A — serve from the app:**
+## Environment Variables
 
-Upload `snippet.mp3` to `static/snippet.mp3` on the server after deploy (Render shell, SCP, etc.). Leave `RICK_ROLL_URL` unset; it defaults to `${BASE_URL}/audio/snippet.mp3`.
+The canonical template lives in [.env.example](.env.example).
 
-**Option B — external host:**
+| Variable | Required | Notes |
+| -------- | -------- | ----- |
+| `TWILIO_ACCOUNT_SID` | Yes | Twilio account SID used for Lookup and REST API access |
+| `TWILIO_AUTH_TOKEN` | Yes | Twilio auth token used for request validation and API calls |
+| `TWILIO_PHONE_NUMBER` | Yes | Voice-capable Twilio number in E.164 format |
+| `BASE_URL` | Yes | Public HTTPS base URL for webhook construction; no trailing slash |
+| `OPENAI_API_KEY` | Yes | Used by [llm.py](llm.py) for response generation |
+| `ELEVENLABS_API_KEY` | Yes for ElevenLabs mode, optional otherwise | If missing, the app logs an error and falls back to Twilio `say()` |
+| `RICK_ROLL_URL` | No | Optional public MP3 URL used by the `/rickroll` route |
+| `SPAM_THRESHOLD` | No | Twilio spam score threshold, default `75` |
+| `NOMOROBO_API_KEY` | No | Enables the Nomorobo lookup layer |
+| `PORT` | No | Defaults to `5000` locally |
 
-Host the MP3 on Cloudflare R2, S3, or any public HTTPS URL. Set `RICK_ROLL_URL` to that URL. No file upload needed.
+## Twilio Configuration
 
----
+Configure your Twilio number with these webhook targets:
 
-## Twilio Webhook Notes
+- Voice webhook: `POST {BASE_URL}/incoming`
+- If you use outbound callback experiments, status callback: `POST {BASE_URL}/status`
 
-- `BASE_URL` must exactly match the host configured in Twilio — including protocol, no trailing slash.
-- `/incoming` and `/respond` validate the Twilio request signature before processing.
-- All routes return valid TwiML even on internal errors to avoid 5xx retry loops.
-- `/status` should be set as the status callback on any outbound calls if you want leaderboard logging.
+Operational notes:
 
----
+- `BASE_URL` must exactly match the URL Twilio signs against.
+- `/incoming` performs a signature check before handling the request.
+- `/rickroll` also validates Twilio signatures.
+- `/respond` currently processes the request without its own explicit signature guard, so if you want stricter webhook hardening, that route is the first place to tighten.
 
-## Legal Notice
+## Deployment
 
-- Use SpamFacker only for defensive handling of inbound calls you receive.
-- Telecom, call recording, and automated callback laws vary by jurisdiction.
-- You are responsible for confirming Twilio usage, recording consent, and local legal compliance before deployment.
-- Do not use this project to harass random numbers or initiate unsolicited campaigns.
+### Render or Railway
+
+1. Create a new web service from this repository.
+2. Use the dependencies from [requirements.txt](requirements.txt).
+3. Use the start command from [Procfile](Procfile): `gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120`
+4. Add the environment variables from [.env.example](.env.example).
+5. Set your Twilio number's voice webhook to `{BASE_URL}/incoming`.
+6. Verify `{BASE_URL}/health` returns `{"status": "ok"}`.
+
+### Cloudflare Pages
+
+The repository root also contains a static marketing page.
+
+1. Connect the repository to Cloudflare Pages.
+2. Use no build command.
+3. Set the output directory to the repository root.
+4. Make sure [_headers](_headers) is published with the static site.
+
+## State and Scaling
+
+Call state lives in process memory inside [conversation.py](conversation.py). That is fine for local development and small single-instance deployments, but it has clear limits:
+
+- Active call state is lost on process restart.
+- Multi-instance deployments need shared state such as Redis.
+- The current [Procfile](Procfile) uses two Gunicorn workers, which may be acceptable for hobby use but is not a robust scaling strategy for long-lived voice sessions.
+
+## Endpoints
+
+| Route | Method | Purpose |
+| ----- | ------ | ------- |
+| `/health` | GET | Basic health check |
+| `/audio/snippet.mp3` | GET | Serves the callback audio file if present |
+| `/audio/tts/<filename>` | GET | Serves generated ElevenLabs audio files |
+| `/incoming` | POST | Main Twilio inbound voice webhook |
+| `/respond` | POST | Conversation loop for speech input |
+| `/rickroll` | POST | Outbound callback trap route |
+| `/status` | POST | Status callback for completion logging and cleanup |
+
+## Known Gaps
+
+- The product vision in [PRODUCT_SPEC.md](PRODUCT_SPEC.md) is much larger than the current implementation.
+- There is no persistent database, dashboard, authentication layer, or billing flow in this repo.
+- The outbound callback helper exists but is not part of the active inbound flow.
+- Audio for `/audio/snippet.mp3` is not included in the repository.
+
+## Troubleshooting
+
+- `403` from Twilio webhook routes usually means `BASE_URL` does not exactly match the public URL Twilio is calling.
+- If replies come back in Twilio voices instead of ElevenLabs audio, check `ELEVENLABS_API_KEY` and the logs from [tts.py](tts.py).
+- If every caller is treated as legitimate, verify Twilio Lookup access, your spam threshold, and whether the number is present in the manual blocklist in [spam_checker.py](spam_checker.py).
+- If call state seems to disappear mid-call, inspect worker count and process restarts first.
+
+## Legal and Operational Use
+
+- Use this project only on calls that reach numbers you control.
+- Verify local laws around call recording, automated callbacks, and telecom abuse before deploying.
+- Do not use the project for harassment, unsolicited campaigns, or retaliatory calling outside lawful defensive use.
