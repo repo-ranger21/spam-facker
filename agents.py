@@ -24,7 +24,7 @@ AGENTS = {
     "mildred": {
         "name": "Mildred",
         "voice": "Polly.Joanna",
-      "elevenlabs_voice_id": "XrExE9yKIg1WjnnlVkGX",
+         "elevenlabs_voice_id": "llN0I4C5mncJL34dZg5G",
         "intro": (
             "Hello? Oh! Oh my goodness, you caught me. I was just in the garden. "
             "Now who is this dear?"
@@ -102,7 +102,7 @@ She asks if this is the one they wanted to discuss.
     "gary": {
         "name": "Gary",
         "voice": "Polly.Matthew",
-      "elevenlabs_voice_id": "CYw3kZ513ntlL07tLzXz",
+         "elevenlabs_voice_id": "eMa0jE4cofnDCsSkOfEp",
         "intro": (
             "YEAH. Hold on — DANNY PUT THAT DOWN — "
             "sorry. Yeah. Go ahead. Make it fast."
@@ -178,7 +178,7 @@ He apologizes and says this is very important — they should absolutely hold.
     "timmy": {
         "name": "Timmy",
         "voice": "Polly.Justin",
-      "elevenlabs_voice_id": "IKne3meq5aSn9XLyUdCD",
+         "elevenlabs_voice_id": "7csv2vrzlH63ZHmTimvB",
         "intro": "Hello. This is Tim. ...How can I help you.",
         "system_prompt": """
 You are Timmy, a 34-year-old man who processes information

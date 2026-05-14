@@ -29,7 +29,7 @@ def assign_agent(call_sid: str, preferred: str | None = None) -> dict:
     Assign a random agent to a new call (or a preferred one if specified).
     Stores initial state and returns the agent definition.
     """
-    agent_key = preferred if preferred in AGENTS else random.choice(list(AGENTS.keys()))
+    agent_key = preferred if preferred in AGENTS else "timmy"
     agent = AGENTS[agent_key]
 
     _calls[call_sid] = {
