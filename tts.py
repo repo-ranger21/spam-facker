@@ -15,7 +15,12 @@ Flow:
 import os
 import hashlib
 import logging
+import random
+import threading
 from pathlib import Path
+from typing import Iterator
+
+import requests
 from elevenlabs.client import ElevenLabs
 from elevenlabs import VoiceSettings
 
@@ -23,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 TTS_DIR = Path("static/tts")
 TTS_DIR.mkdir(parents=True, exist_ok=True)
+FILLERS_DIR = Path("static/tts/fillers")
+_cleanup_lock = threading.Lock()
 
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
@@ -73,11 +80,14 @@ def synthesize(text: str, voice_id: str, call_sid: str) -> str | None:
         with open(file_path, "wb") as f:
             f.write(audio_bytes)
 
-        logger.info(f"[{call_sid}] TTS generated: {len(audio_bytes)} bytes -> {cache_key[:8]}.mp3")
+        logger.info(
+            f"[{call_sid}] TTS generated: {len(audio_bytes)} bytes "
+            f"-> {cache_key[:8]}.mp3"
+        )
         return str(file_path)
 
-    except Exception as e:
-        logger.error(f"[{call_sid}] ElevenLabs TTS failed: {e}")
+    except Exception:
+        logger.exception("[%s] ElevenLabs TTS failed", call_sid)
         return None
 
 
@@ -87,8 +97,89 @@ def cleanup_old_files(max_files: int = 200):
     Deletes oldest files when count exceeds max_files.
     Called from /status on call completion.
     """
-    files = sorted(TTS_DIR.glob("*.mp3"), key=lambda f: f.stat().st_mtime)
-    if len(files) > max_files:
-        for f in files[:len(files) - max_files]:
-            f.unlink(missing_ok=True)
-            logger.info(f"TTS cache cleanup: removed {f.name}")
+    with _cleanup_lock:
+        files = sorted(TTS_DIR.glob("*.mp3"), key=lambda f: f.stat().st_mtime)
+        if len(files) > max_files:
+            for f in files[:len(files) - max_files]:
+                f.unlink(missing_ok=True)
+                logger.info(f"TTS cache cleanup: removed {f.name}")
+
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+class FillerMissingError(Exception):
+    """Raised when no pre-rendered filler files exist for an agent."""
+
+
+class TTSError(Exception):
+    """Raised when the ElevenLabs streaming endpoint returns an error."""
+
+
+# ---------------------------------------------------------------------------
+# Filler audio helpers (Phase 1)
+# ---------------------------------------------------------------------------
+
+def get_filler_url(agent_name: str, base_url: str) -> str:
+    """
+    Return a URL pointing to a random pre-rendered filler MP3 for the agent.
+    Raises FillerMissingError if no filler files have been generated yet.
+    """
+    agent_slug = agent_name.lower()
+    filler_dir = FILLERS_DIR / agent_slug
+    if not filler_dir.exists():
+        raise FillerMissingError(f"No filler directory for agent: {agent_name}")
+    files = list(filler_dir.glob("*.mp3"))
+    if not files:
+        raise FillerMissingError(f"No filler MP3s for agent: {agent_name}")
+    chosen = random.choice(files)
+    return f"{base_url}/audio/fillers/{agent_slug}/{chosen.name}"
+
+
+# ---------------------------------------------------------------------------
+# Streaming TTS (Phase 2)
+# ---------------------------------------------------------------------------
+
+def stream_tts(text: str, voice_id: str) -> Iterator[bytes]:
+    """
+    Yield MP3 audio chunks from the ElevenLabs streaming endpoint.
+
+    Uses eleven_turbo_v2_5 with optimize_streaming_latency=3 for minimum
+    time-to-first-byte. Raises TTSError on non-200 or missing API key.
+    """
+    if not ELEVENLABS_API_KEY:
+        raise TTSError("ELEVENLABS_API_KEY is not set")
+
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
+    headers = {
+        "xi-api-key": ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "text": text,
+        "model_id": "eleven_turbo_v2_5",
+        "voice_settings": {
+            "stability": 0.45,
+            "similarity_boost": 0.75,
+            "style": 0.35,
+            "use_speaker_boost": True,
+        },
+    }
+    params = {
+        "optimize_streaming_latency": 3,
+        "output_format": "mp3_44100_64",
+    }
+    resp = requests.post(
+        url,
+        headers=headers,
+        json=payload,
+        params=params,
+        stream=True,
+        timeout=10,
+    )
+    if resp.status_code != 200:
+        raise TTSError(f"ElevenLabs streaming failed with status {resp.status_code}")
+    for chunk in resp.iter_content(chunk_size=4096):
+        if chunk:
+            yield chunk

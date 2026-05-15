@@ -16,47 +16,22 @@ Target LLM response < 2 seconds. Keep max_tokens tight.
 """
 
 import os
+import json
 import logging
 from openai import OpenAI
-from agents import ESCALATION_TURN
+from conversation import CallState
 
 logger = logging.getLogger(__name__)
 
-# Keep responses short — this is voice, not text. 1-3 sentences max.
-# Long responses get cut off or sound unnatural over the phone.
-MAX_TOKENS = 90
-MODEL = "gpt-4o-mini"
+# Stage 1 classifier: fast, cheap, structured (~200 ms, ~$0.0001/turn)
+CLASSIFIER_MODEL = "gpt-4o-mini"
+# Stage 2 persona: higher quality for character realism
+MODEL = "gpt-4o"
+# Hard cap — agents shouldn't monologue; voice turns are short
+MAX_TOKENS = 60
 
 
-def generate_response(
-    agent: dict,
-    history: list[dict],
-    user_speech: str,
-    escalate: bool = False,
-) -> str:
-    """
-    Generate the agent's next spoken response.
-
-    Args:
-        agent       : Agent definition dict from agents.py
-        history     : Full conversation history so far
-        user_speech : What the caller just said (STT result from Twilio)
-        escalate    : Whether to inject the escalation prompt this turn
-
-    Returns:
-        Plain text response (no SSML, no markdown — Twilio reads it as-is)
-    """
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-    # Build the system message
-    system_content = agent["system_prompt"].strip()
-
-    if escalate:
-        system_content += "\n\n" + agent["escalation_prompt"].strip()
-        logger.info("Escalation prompt injected")
-
-    # Voice-specific instructions appended to every system prompt
-    system_content += """
+_VOICE_RULES = """
 
 VOICE OUTPUT RULES - HUMAN REALISM (critical):
 - You are speaking out loud on a phone call. Not writing. Not texting.
@@ -88,30 +63,191 @@ VOICE OUTPUT RULES - HUMAN REALISM (critical):
 - Numbers spoken: "forty-seven" not "47". "January" not "1/1".
 """
 
+_CLASSIFIER_PROMPT = """\
+Classify the scammer's utterance. Return JSON with exactly these fields:
+  "intent": demand_payment|demand_info|create_urgency|threaten|build_rapport|verify_identity|other
+  "ask_for": ssn|card_number|bank_account|address|dob|pin|gift_card|wire_transfer|null
+  "pressure": urgency|authority|sympathy|reward|none
+  "frustrated": true if they say listen/focus/stop/pay attention/ma'am please, else false
+  "scam_type": irs|medicare|tech_support|gift_card|romance|lottery|unknown
+Return only the JSON object, no explanation.\
+"""
+
+
+def classify_utterance(
+    utterance: str,
+    state: CallState | None,
+    client: OpenAI,
+) -> dict:
+    """Stage 1: fast gpt-4o-mini classification of the scammer's utterance."""
+    _FALLBACK: dict = {
+        "intent": "unknown",
+        "ask_for": None,
+        "pressure": "none",
+        "frustrated": False,
+        "scam_type": None,
+    }
+    try:
+        response = client.chat.completions.create(
+            model=CLASSIFIER_MODEL,
+            messages=[
+                {"role": "system", "content": _CLASSIFIER_PROMPT},
+                {"role": "user", "content": utterance},
+            ],
+            max_tokens=120,
+            temperature=0.0,
+            response_format={"type": "json_object"},
+        )
+        result = json.loads(response.choices[0].message.content)
+        logger.info("[classifier] %s", result)
+        return result
+    except Exception:
+        logger.exception("Classifier failed; using fallback")
+        return _FALLBACK
+
+
+def _apply_classification(state: CallState, c: dict) -> None:
+    """Apply LLM classification results to the call state."""
+    ask = c.get("ask_for")
+    if ask:
+        if ask in state.asked_for:
+            state.repeated_demands += 1
+        else:
+            state.asked_for.add(ask)
+    if c.get("frustrated"):
+        state.scammer_frustration_signals += 1
+    if state.scam_type is None:
+        scam = c.get("scam_type")
+        if scam and scam != "unknown":
+            state.scam_type = scam
+    if state.scammer_tactic is None:
+        pressure = c.get("pressure")
+        if pressure and pressure != "none":
+            state.scammer_tactic = pressure
+
+
+def _build_call_context(c: dict, state: CallState | None) -> str:
+    """Build a [CALL CONTEXT] block from classification + accumulated state."""
+    scam = (state.scam_type if state else None) or "unknown"
+    intent = c.get("intent", "unknown")
+    pressure = c.get("pressure", "none")
+    lines = [
+        "[CALL CONTEXT]",
+        f"Scam type: {scam}",
+        f"Scammer just: {intent} (pressure: {pressure})",
+    ]
+    if state and state.asked_for:
+        lines.append(
+            "Already asked for: " + ", ".join(sorted(state.asked_for))
+        )
+    if state and state.tactics_used:
+        recent = state.tactics_used[-3:]
+        lines.append(f"Avoid repeating: {recent}")
+    if state and state.scammer_frustration_signals >= 1:
+        lines.append(
+            f"Frustration level: {state.scammer_frustration_signals}"
+        )
+    return "\n".join(lines)
+
+
+def _trim_history(history: list[dict], last_n: int = 6) -> list[dict]:
+    """Return the last last_n exchange-pairs (2 * last_n messages)."""
+    return history[-(last_n * 2):]
+
+
+def recent_turns(turns: list, n: int = 6) -> list[dict]:
+    """
+    Return the last n exchange-pairs from a list of Turn objects as
+    OpenAI message dicts.  Used by build_messages and unit tests.
+    """
+    return [t.to_message() for t in turns[-(n * 2):]]
+
+
+def build_messages(
+    call_state: "CallState",
+    scammer_utterance: str,
+    classification: dict | None = None,
+    escalate: bool = False,
+) -> list[dict]:
+    """
+    Assemble the full messages list for the Stage 2 persona call.
+    Respects ENABLE_TOKEN_CAP for history depth.
+    """
+    agent = call_state.agent
+    system_content = agent["system_prompt"].strip()
+    if escalate:
+        system_content += "\n\n" + agent["escalation_prompt"].strip()
+    system_content += _VOICE_RULES
+    if classification:
+        system_content += "\n\n" + _build_call_context(classification, call_state)
+    n = 6 if os.getenv("ENABLE_TOKEN_CAP", "false").lower() == "true" else 10
+    return [
+        {"role": "system", "content": system_content},
+        *recent_turns(call_state.turns, n=n),
+        {"role": "user", "content": scammer_utterance},
+    ]
+
+
+def generate_response(
+    agent: dict,
+    history: list[dict],
+    user_speech: str,
+    escalate: bool = False,
+    state: CallState | None = None,
+) -> str:
+    """
+    Generate the agent's next spoken response (two-stage pipeline).
+
+    Stage 1: gpt-4o-mini classifies the scammer's utterance (~200 ms).
+    Stage 2: gpt-4o generates the persona response with surgical context.
+
+    Returns plain text (no SSML, no markdown).
+    """
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    # Stage 1: classify the scammer's utterance and update the case file
+    classification = classify_utterance(user_speech, state, client)
+    if state is not None:
+        _apply_classification(state, classification)
+
+    # Build the system message
+    system_content = agent["system_prompt"].strip()
+    if escalate:
+        system_content += "\n\n" + agent["escalation_prompt"].strip()
+        logger.info("Escalation prompt injected")
+    system_content += _VOICE_RULES
+
+    # Inject per-turn context: intent + accumulated scam intel
+    system_content += "\n\n" + _build_call_context(classification, state)
+
+    # Stage 2: persona response — gpt-4o with trimmed history
+    _token_cap = os.getenv("ENABLE_TOKEN_CAP", "false").lower() == "true"
+    _history_depth = 6 if _token_cap else 10
     messages = [{"role": "system", "content": system_content}]
-
-    # Add conversation history (last 10 turns max to stay within context)
-    messages.extend(history[-20:])
-
-    # Add the current user input
+    messages.extend(_trim_history(history, last_n=_history_depth))
     messages.append({"role": "user", "content": user_speech})
 
     try:
         response = client.chat.completions.create(
             model=MODEL,
             messages=messages,
-            max_tokens=MAX_TOKENS,
-            temperature=0.92,
-            presence_penalty=0.8,
+            max_tokens=60 if _token_cap else 90,
+            temperature=0.9,
+            presence_penalty=0.6,
+            frequency_penalty=0.3 if _token_cap else 0.0,
         )
         reply = response.choices[0].message.content.strip()
-        logger.info(f"LLM response ({len(reply)} chars): {reply[:80]}...")
+        logger.info(
+            "LLM response (%d chars): %s...", len(reply), reply[:80]
+        )
         return reply
 
-    except Exception as e:
-        logger.error(f"LLM call failed: {e}")
-        # Fail gracefully — return a stall line so the call doesn't drop
-        return "Hold on just one moment, I'm having a little trouble hearing you."
+    except Exception:
+        logger.exception("LLM call failed")
+        return (
+            "Hold on just one moment, "
+            "I'm having a little trouble hearing you."
+        )
 
 
 def generate_stall(agent: dict) -> str:
