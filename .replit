@@ -1,0 +1,15 @@
+modules = ["python-3.11"]
+
+[nix]
+channel = "stable-24_05"
+
+[deployment]
+run = ["gunicorn", "app:app", "--bind", "0.0.0.0:8080", "--workers", "2", "--timeout", "120"]
+deploymentTarget = "cloudrun"
+
+[env]
+PORT = "8080"
+
+[[ports]]
+localPort = 8080
+externalPort = 80
