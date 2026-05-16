@@ -598,7 +598,7 @@ function AgentDetailPage({agentKey,navigate}) {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-          model:"claude-sonnet-4-5",
+          model:"claude-sonnet-4-5-20251001",
           max_tokens:1000,
           system:a.systemPrompt+"\n\nCRITICAL: Respond ONLY with what "+a.name+" would say out loud, in character. 1-3 sentences maximum. No stage directions. No asterisks. No descriptions. Just spoken words.",
           messages:[{role:"user",content:testInput}]
