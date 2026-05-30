@@ -3,7 +3,7 @@ __pycache__/
 *.pyo
 .env
 .DS_Store
-static/*.mp3
+recordings/
 *.egg-info/
 dist/
 .venv/
@@ -13,3 +13,9 @@ node_modules/
 .claude/
 render-bin/
 render-cli.zip
+
+# --- never ignore application source ---
+!*.py
+!bridge/
+!bridge/*.py
+!static/snippet.mp3
