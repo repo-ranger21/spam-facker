@@ -37,6 +37,7 @@ from conversation import (
     should_escalate,
 )
 from llm import generate_response
+from record_util import RECORDINGS_DIR, make_mp4
 from spam_checker import is_spam
 from tts import FillerMissingError, cleanup_old_files, get_filler_url, stream_tts, synthesize
 
@@ -177,6 +178,8 @@ RICK_ROLL_URL = os.getenv(
     "RICK_ROLL_URL",
     f"{BASE_URL}/audio/snippet.mp3",
 )
+CREATOR_STRIKE_ENABLED = os.getenv("CREATOR_STRIKE_ENABLED", "false").lower() == "true"
+CREATOR_STRIKE_STRIPE_URL = os.getenv("CREATOR_STRIKE_STRIPE_URL", "")
 
 client = Client(ACCOUNT_SID, AUTH_TOKEN)
 request_validator = RequestValidator(AUTH_TOKEN)
@@ -202,6 +205,16 @@ _streaming_registry = StreamingRegistry()
 # ---------------------------------------------------------------------------
 _bridge_registry: dict[str, "RealtimeBridge"] = {}
 _bridge_registry_lock = threading.Lock()
+
+# call_sid → {"mp3": str, "mp4": str | None}
+_recordings: dict[str, dict] = {}
+_recordings_lock = threading.Lock()
+
+# Caller cascade tracking: scammer number -> count of agent callbacks already placed
+_caller_log: dict[str, int] = {}
+_caller_log_lock = threading.Lock()
+CALLBACK_CAP = 3          # total agent callbacks after the initial song
+CALLBACK_DELAY_SEC = 60   # delay after each call ends before the next callback
 
 
 def _shutdown_thread_pool() -> None:
@@ -388,13 +401,25 @@ def incoming_call() -> Response:
     response = VoiceResponse()
 
     if is_spam(caller):
-        logger.info("SPAM DETECTED: %s; deploying agent", caller)
+        with _caller_log_lock:
+            first_time = caller not in _caller_log
+            if first_time:
+                _caller_log[caller] = 0
 
+        if first_time:
+            logger.info("FIRST CONTACT: %s; playing song on infinite loop", caller)
+            response.play(RICK_ROLL_URL, loop=0)
+            # Song loops until they hang up. The /status 'completed' event then
+            # kicks off the agent callback cascade.
+            return _twiml_response(response)
+
+        # Returning caller (voluntary redial): deploy a live agent. No song,
+        # no callback spawn here — the cascade is driven entirely by /status.
+        logger.info("RETURNING CALLER: %s; deploying agent", caller)
         if _should_route_to_realtime():
             return _realtime_twiml(call_sid, caller)
 
         agent = assign_agent(call_sid)
-
         gather = Gather(
             input="speech",
             action=f"{BASE_URL}/respond",
@@ -411,20 +436,12 @@ def incoming_call() -> Response:
             if voice_id
             else None
         )
-
         if tts_path:
-            audio_url = f"{BASE_URL}/audio/tts/{Path(tts_path).name}"
-            gather.play(audio_url)
+            gather.play(f"{BASE_URL}/audio/tts/{Path(tts_path).name}")
         else:
             gather.say(agent["intro"], voice=agent["voice"])
         response.append(gather)
-
         response.redirect(f"{BASE_URL}/respond", method="POST")
-        threading.Thread(
-            target=_launch_callback,
-            args=(caller,),
-            daemon=True,
-        ).start()
     else:
         response.say(
             "Thank you for calling. Please hold.",
@@ -655,13 +672,17 @@ def rickroll() -> Response:
 def _launch_callback(spam_number: str) -> None:
     """Dial the spammer back using Twilio's REST API."""
     try:
-        call = client.calls.create(
+        create_kwargs: dict = dict(
             to=spam_number,
             from_=MY_TWILIO_NUMBER,
             url=f"{BASE_URL}/rickroll",
             status_callback=f"{BASE_URL}/status",
             status_callback_event=["completed"],
         )
+        if CREATOR_STRIKE_ENABLED:
+            create_kwargs["record"] = True
+            create_kwargs["recording_status_callback"] = f"{BASE_URL}/recording_ready"
+        call = client.calls.create(**create_kwargs)
         logger.info("Callback launched; SID: %s", call.sid)
     except TwilioRestException as exc:
         logger.exception(
@@ -675,6 +696,50 @@ def _launch_callback(spam_number: str) -> None:
             "Unexpected error while launching callback to %s",
             spam_number,
         )
+
+
+def _launch_agent_callback(spam_number: str) -> None:
+    """Dial the spammer back and route them straight into a live agent."""
+    try:
+        call = client.calls.create(
+            to=spam_number,
+            from_=MY_TWILIO_NUMBER,
+            url=f"{BASE_URL}/agent_callback",
+            status_callback=f"{BASE_URL}/status",
+            status_callback_event=["completed"],
+        )
+        logger.info("Agent callback launched to %s; SID: %s", spam_number, call.sid)
+    except TwilioRestException as exc:
+        logger.exception(
+            "Agent callback failed for %s; code=%s message=%s",
+            spam_number, exc.code, exc.msg,
+        )
+    except Exception:
+        logger.exception("Unexpected error launching agent callback to %s", spam_number)
+
+
+@app.route("/agent_callback", methods=["POST"])
+def agent_callback() -> Response:
+    """Outbound callback answered by the spammer — deploy a live agent."""
+    if not _validate_twilio_request():
+        logger.warning("Invalid Twilio signature for /agent_callback")
+        return _hangup_twiml_response(status_code=403)
+
+    call_sid = request.form.get("CallSid", "")
+    logger.info("Agent callback answered | SID: %s", call_sid)
+
+    agent = assign_agent(call_sid)
+    response = VoiceResponse()
+    gather = _build_gather(f"{BASE_URL}/respond")
+    voice_id = agent.get("elevenlabs_voice_id")
+    tts_path = synthesize(agent["intro"], voice_id, call_sid) if voice_id else None
+    if tts_path:
+        gather.play(f"{BASE_URL}/audio/tts/{Path(tts_path).name}")
+    else:
+        gather.say(agent["intro"], voice=agent["voice"])
+    response.append(gather)
+    response.redirect(f"{BASE_URL}/respond", method="POST")
+    return _twiml_response(response)
 
 
 @app.route("/incoming_realtime", methods=["POST"])
@@ -749,6 +814,9 @@ def call_status() -> Response:
     duration = request.form.get("CallDuration", "0")
     to = request.form.get("To", "Unknown")
     duration_seconds = _safe_int(duration)
+    direction = request.form.get("Direction", "")
+    scammer = request.form.get("From", "") if direction == "inbound" \
+        else request.form.get("To", "")
 
     logger.info(
         "Call %s to %s | Status: %s | Duration: %ss",
@@ -769,12 +837,94 @@ def call_status() -> Response:
             duration_seconds // 60,
             duration_seconds % 60,
         )
+        # --- Agent callback cascade (capped) ---
+        do_schedule = False
+        next_n = 0
+        with _caller_log_lock:
+            fired = _caller_log.get(scammer)
+            if fired is not None and fired < CALLBACK_CAP:
+                _caller_log[scammer] = fired + 1
+                next_n = fired + 1
+                do_schedule = True
+        if do_schedule:
+            logger.info(
+                "Scheduling agent callback %d/%d to %s in %ds",
+                next_n, CALLBACK_CAP, scammer, CALLBACK_DELAY_SEC,
+            )
+            threading.Timer(
+                CALLBACK_DELAY_SEC, _launch_agent_callback, args=(scammer,)
+            ).start()
         _pending_registry.cleanup(sid)
         _streaming_registry.cleanup_expired()
         end_call(sid)
         cleanup_old_files()
 
     return Response("", status=204)
+
+
+@app.route("/recording_ready", methods=["POST"])
+def recording_ready() -> Response:
+    """Twilio recording status callback — triggered when a call recording is ready."""
+    if not _validate_twilio_request():
+        logger.warning("Invalid Twilio signature for /recording_ready")
+        return Response("Forbidden", status=403)
+
+    status = request.form.get("RecordingStatus", "")
+    call_sid = request.form.get("CallSid", "")
+    recording_url = request.form.get("RecordingUrl", "")
+
+    if status != "completed" or not recording_url:
+        return Response("", status=204)
+
+    logger.info("Recording ready for call %s — generating MP4", call_sid)
+
+    def _generate(sid: str, url: str) -> None:
+        try:
+            mp3_path, mp4_path = make_mp4(url, sid, ACCOUNT_SID, AUTH_TOKEN)
+            with _recordings_lock:
+                _recordings[sid] = {"mp3": mp3_path, "mp4": mp4_path}
+            logger.info("Creator Strike media ready for %s", sid)
+        except Exception:
+            logger.exception("MP4 generation failed for call %s", sid)
+            with _recordings_lock:
+                _recordings[sid] = {"mp3": None, "mp4": None}
+
+    threading.Thread(target=_generate, args=(call_sid, recording_url), daemon=True).start()
+    return Response("", status=204)
+
+
+@app.route("/api/download/<call_id>", methods=["GET"])
+def download_recording(call_id: str) -> Response:
+    """Serve the MP3 or MP4 for a Creator Strike call recording.
+
+    Query params:
+        format=mp3  (default) — raw audio
+        format=mp4  — branded vertical video
+    """
+    fmt = request.args.get("format", "mp3").lower()
+    if fmt not in ("mp3", "mp4"):
+        return Response("Invalid format. Use mp3 or mp4.", status=400)
+
+    with _recordings_lock:
+        entry = _recordings.get(call_id)
+
+    if not entry:
+        return Response("Recording not found.", status=404)
+
+    file_path = entry.get(fmt)
+    if not file_path or not Path(file_path).exists():
+        if fmt == "mp4" and entry.get("mp3"):
+            return Response("MP4 is still being generated. Try again shortly.", status=202)
+        return Response("File not available.", status=404)
+
+    mimetype = "audio/mpeg" if fmt == "mp3" else "video/mp4"
+    return send_from_directory(
+        str(RECORDINGS_DIR),
+        Path(file_path).name,
+        mimetype=mimetype,
+        as_attachment=True,
+        download_name=f"spamfacker_{call_id}.{fmt}",
+    )
 
 
 if __name__ == "__main__":
